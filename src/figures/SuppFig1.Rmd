@@ -1,0 +1,341 @@
+---
+title: "Supplemental Figure 1"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will create plots for supplemental figure 1
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(tidygraph)
+
+
+thisseed <- 231103
+
+ct.colors <- c('#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b',
+       '#e377c2', '#7f7f7f', '#bcbd22', '#17becf')
+
+edgeColVec <- c(
+  "transparent" = "#ffffff",
+  "present" = "#000000",
+  "A" = ct.colors[1],
+  "B" = ct.colors[2],
+  "C" = ct.colors[3],
+  "D" = ct.colors[4],
+  "E" = ct.colors[5],
+  "F" = ct.colors[6],
+  "G" = ct.colors[7],
+  "H" = ct.colors[8],
+  "I" = ct.colors[9],
+  "J" = ct.colors[10]
+  )
+
+colEPI <- "#7FC97F"
+colLP <- "#FDC086"
+
+extendNum <- 4
+finalCol <- "gray100"
+```
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+# Epithelium and Lamina Propria Fractions
+
+```{r}
+idsEPI <- obs %>% filter(layer == "EPI") %>% pull(sample) %>% unique
+colsEPI <- colorRampPalette(colors = c(finalCol,colEPI))(
+    length(idsEPI) + extendNum
+)
+colsEPI <- colsEPI[(extendNum+1):length(colsEPI)]
+names(colsEPI) <- idsEPI
+colsEPI
+
+idsLP <- obs %>% filter(layer == "LP") %>% pull(sample) %>% unique
+colsLP <- colorRampPalette(colors = c(finalCol,colLP))(
+    length(idsLP) + extendNum
+)
+colsLP <- colsLP[(extendNum+1):length(colsLP)]
+names(colsLP) <- idsLP
+colsLP
+```
+
+```{r, fig.width=8, fig.height=24}
+ggplot(obs, aes(y = cellstate)) + 
+  geom_bar(aes(fill = fct_relevel(sample, c(names(colsEPI), names(colsLP) ))),
+    position="fill", color = "black", linewidth=0.25, show.legend = F) +
+  scale_fill_manual(values = c(colsEPI, colsLP)) +
+  ggnewscale::new_scale_fill() +
+  geom_col(data = data.frame(layer = fct_inorder(c("Lamina Propria", "Epithelium"))),
+           aes(x = 0, y = 0, fill = layer), color = "black",
+           alpha = 0, lwd = 0) +
+  scale_fill_manual(values = c("Epithelium" = colEPI, "Lamina Propria" = colLP),
+                    guide = guide_legend(override.aes = list(size = 10, alpha = 1, lwd = 2, color = "black"))) +
+  scale_x_continuous(labels = scales::percent(c(0, 0.25, 0.5, 0.75, 1))) +
+  scale_y_discrete(limits = rev) +
+  facet_grid(celltype ~ ., 
+             scales = "free_y", space = "free_y") +
+  theme_light() + 
+  theme(
+    legend.position = "top", 
+    legend.title = element_blank(),
+    legend.text = element_text(size = 24, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", hjust=0.30),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.ticks.x = element_line(linewidth = 1, color = "black"),
+    strip.text = element_text(size = 16, face = "bold", colour = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    plot.margin = unit(c(0.25, 0.75, 0.25, 0.25), "cm")
+  ) +
+  labs(
+    x = "Percentage of Cells",
+    y = "Cellstate",
+    fill = "Biopsy Fraction"
+  ) 
+```
+
+# Annotation Dendrogram
+
+```{r}
+obs.unique <- obs %>% mutate(root = as.factor("PREDICT")) %>%  distinct(root, celltype, cellsubtype, cellstate)
+obs.unique
+```
+
+```{r}
+levels.colepi <- obs.unique %>% 
+  filter(celltype == "ColEpi") %>% 
+  droplevels %>% 
+  pull(cellsubtype) %>% 
+  levels
+
+levels.colepi
+
+mapcol.colepi <- LETTERS[1:length(levels.colepi)]
+names(mapcol.colepi) <- levels.colepi
+
+mapcol.colepi
+```
+
+```{r}
+levels.stroma <- obs.unique %>% 
+  filter(celltype == "Stroma") %>% 
+  droplevels %>% 
+  pull(cellsubtype) %>% 
+  levels
+
+levels.stroma
+
+mapcol.stroma <- LETTERS[1:length(levels.stroma)]
+names(mapcol.stroma) <- levels.stroma
+
+mapcol.stroma
+```
+
+```{r}
+levels.myeloid <- obs.unique %>% 
+  filter(celltype == "Myeloid") %>% 
+  droplevels %>% 
+  pull(cellsubtype) %>% 
+  levels
+
+levels.myeloid
+
+mapcol.myeloid <- LETTERS[1:length(levels.myeloid)]
+names(mapcol.myeloid) <- levels.myeloid
+
+mapcol.myeloid
+```
+
+```{r}
+levels.plasma <- obs.unique %>% 
+  filter(celltype == "Plasma") %>% 
+  droplevels %>% 
+  pull(cellsubtype) %>% 
+  levels
+
+levels.plasma
+
+mapcol.plasma <- LETTERS[1:length(levels.plasma)]
+names(mapcol.plasma) <- levels.plasma
+
+mapcol.plasma
+```
+
+```{r}
+levels.bcell <- obs.unique %>% 
+  filter(celltype == "BCell") %>% 
+  droplevels %>% 
+  pull(cellsubtype) %>% 
+  levels
+
+levels.bcell
+
+mapcol.bcell <- LETTERS[1:length(levels.bcell)]
+names(mapcol.bcell) <- levels.bcell
+
+mapcol.bcell
+```
+
+```{r}
+levels.tnkilc <- obs.unique %>% 
+  filter(celltype == "TNKILC") %>% 
+  droplevels %>% 
+  pull(cellsubtype) %>% 
+  levels
+
+levels.tnkilc
+
+mapcol.tnkilc <- LETTERS[1:length(levels.tnkilc)]
+names(mapcol.tnkilc) <- levels.tnkilc
+
+mapcol.tnkilc
+```
+
+```{r}
+mapcol <- c(mapcol.colepi, mapcol.stroma, mapcol.myeloid, mapcol.plasma, mapcol.bcell, mapcol.tnkilc)
+mapcol
+```
+
+
+```{r}
+celltypes <- obs.unique$celltype %>% levels
+celltypes
+
+cellsubtypes <- obs.unique$cellsubtype %>% levels
+cellsubtypes
+
+cellstates <- obs.unique$cellstate %>% levels
+cellstates
+```
+
+
+```{r}
+cellstate.cellsubtype.assignments <- obs.unique %>% pull(cellsubtype, cellstate)
+cellstate.cellsubtype.assignments
+```
+
+```{r}
+cellstate.celltype.assignments <- obs.unique %>% pull(celltype, cellstate)
+# cellstate.celltype.assignments
+# 
+cellsubtype.celltype.assignments <- obs.unique %>% pull(celltype, cellsubtype)
+# cellsubtype.celltype.assignments
+# 
+celltype.celltype.assignments <- obs.unique %>% pull(celltype, celltype)
+# celltype.celltype.assignments
+
+all.celltype.assignments <- c(celltype.celltype.assignments, cellsubtype.celltype.assignments, cellstate.celltype.assignments)
+all.celltype.assignments
+```
+
+
+```{r}
+obs.unique.prop <- obs %>% 
+  mutate(root = as.factor("PREDICT")) %>%  
+  add_count(celltype, name = "celltype.n") %>% 
+  add_count(cellsubtype, name = "cellsubtype.n") %>% 
+  add_count(cellstate, name = "cellstate.n") %>% 
+  mutate(celltype.prop = celltype.n/n()) %>% 
+  mutate(cellsubtype.prop = cellsubtype.n/celltype.n) %>% 
+  mutate(cellstate.prop = cellstate.n/cellsubtype.n) %>% 
+  distinct(root, celltype, cellsubtype, cellstate, celltype.prop, cellsubtype.prop, cellstate.prop)
+obs.unique.prop
+```
+
+```{r}
+edges.01.prop <- obs.unique.prop %>% 
+  select(root, celltype, celltype.prop) %>% 
+  unique %>% 
+  rename(from=root, to=celltype, prop=celltype.prop) %>% 
+  mutate(celltype = to) %>%  
+  mutate(edgecol = "transparent")
+
+edges.01.prop %>% arrange(from, to)
+
+edges.12.prop <- obs.unique.prop %>% 
+  select(celltype, cellsubtype, cellsubtype.prop) %>% 
+  unique %>% 
+  rename(from=celltype, to=cellsubtype, prop=cellsubtype.prop) %>% 
+  mutate(celltype = from) %>%
+  # mutate(edgecol = "present")
+  mutate(edgecol = mapcol[to])
+
+edges.12.prop %>% arrange(from, to)
+
+edges.23.prop <- obs.unique.prop %>% 
+  select(cellsubtype, cellstate, celltype, cellstate.prop) %>% 
+  unique %>% 
+  rename(from=cellsubtype, to=cellstate, prop=cellstate.prop) %>% 
+  mutate(edgecol = mapcol[from])
+
+edges.23.prop %>% arrange(from, to)
+
+edge.df.prop <- rbind(
+  edges.01.prop %>% arrange(from, to),
+  edges.12.prop %>% arrange(from, to),
+  edges.23.prop %>% arrange(from, to)
+  )
+edge.df.prop
+```
+
+```{r}
+cs.igraph.prop <- edge.df.prop %>% 
+  mutate(from = fct_rev(from)) %>%
+  mutate(to = fct_rev(to)) %>%
+  arrange(from, to) %>% 
+  mutate(to = ifelse(from %in% cellsubtypes & (as.character(from) == as.character(to)), # to handle duplicate cell types and states
+                     paste0(as.character(to), "_CS"),
+                     as.character(to))
+         ) %>% 
+  as_tbl_graph() %>% 
+  activate("nodes") %>% 
+  mutate(nodecol = case_when(
+    name == "PREDICT" ~ "transparent",
+    name %in% celltypes ~ "present",
+    name %in% cellsubtypes ~ mapcol[name],
+    str_remove(name, "_CS") %in% cellstates ~ mapcol[cellstate.cellsubtype.assignments[str_remove(name, "_CS")]]
+  ))
+
+cs.igraph.prop
+```
+
+
+```{r, fig.width=40, fig.height=10}
+cs.igraph.prop %>% 
+  activate("nodes") %>% 
+  mutate(textsize = case_when(
+    name %in% celltypes ~ "large",
+    name %in% cellsubtypes ~ "medium",
+    name %in% cellstates ~ "small",
+    str_detect(name, "_CS") ~ "small"
+  )) %>% 
+  mutate(name = str_remove(name, "_CS")) %>% 
+  mutate(celltype = fct_rev(all.celltype.assignments)[name]) %>% 
+  ggraph(layout = 'dendrogram') + 
+  geom_edge_elbow(aes(color = edgecol, width = prop)) +
+  scale_edge_color_manual(values = edgeColVec) +
+  scale_edge_width(range = c(1,8)) +
+  geom_node_label(aes(label = name, size = textsize, color = nodecol), fontface = "bold", angle = -90, alpha = 1, label.size = 2, label.padding = unit(0.125, "lines")) +
+  scale_color_manual(values = edgeColVec) +
+  ggnewscale::new_scale("color") +
+  geom_node_label(aes(label = name, size = textsize), color = "black", fontface = "bold", angle = -90, alpha = 1, label.size = 0, label.padding = unit(0.125, "lines")) +
+  facet_graph(~celltype, row_type = "node", col_type = "node", scales = "free", space = "free") +
+  scale_size_manual(values = c("large" = 12, "medium" = 9.5,  "small" = 8.5)) +
+  coord_cartesian(clip = "off") +
+  theme_void() + 
+  theme(
+    legend.position = "none",
+    plot.margin = unit(c(0,-0.2,2.5,-0.6), "cm"),
+    panel.spacing.x = unit(0.75, "cm")
+    )
+```

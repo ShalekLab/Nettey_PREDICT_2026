@@ -1,0 +1,564 @@
+---
+title: "Main Figure 5"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Main Figure 5
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggrepel)
+library(tidytext)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+celltype.order <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+# Differential Expression
+
+## Celltypes
+
+```{r}
+list.files("out/studytables/")
+```
+
+```{r}
+de.ucprnr.celltypes.df <- read_csv("out/deseq2/DE__UCNRvsPR_celltypes.csv") %>% 
+  mutate(annotation = fct_relevel(annotation, celltype.order))
+
+de.ucprnr.celltypes.df
+```
+
+```{r}
+de.ucprnr.celltypes.df %>% arrange(log2FoldChange)
+```
+
+```{r, fig.width=20, fig.height=9}
+de.ucprnr.celltypes.range <- de.ucprnr.celltypes.df %>% filter(!is.na(padj)) %>% pull(log2FoldChange) %>% range %>% abs %>% max %>% ceiling
+de.ucprnr.celltypes.range <- c(-de.ucprnr.celltypes.range, de.ucprnr.celltypes.range)
+
+ggplot(de.ucprnr.celltypes.df %>% 
+  mutate(labelname = ifelse((padj <= 0.05 & annotation != "ColEpi") | 
+                              (padj <= 0.01 & annotation == "ColEpi"), gene, NA)) %>% 
+         mutate(antitnf_response = ifelse(sign(stat) == 1, "NR", "PR")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, antitnf_response, "Not DE")) %>% 
+         mutate(antitnf_response = fct_relevel(antitnf_response, c("PR", "NR"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(aes(size = -log10(padj)), color = "black", seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = atnfColVec, limits = c("NR", "PR")) +
+  scale_fill_manual(values = atnfColVec, limits = c("PR", "Not DE", "NR"), 
+                    labels = c("PR" = "Enriched in Pre-treatment UC Partial Responders", 
+                               "Not DE" = "Not DE", 
+                               "NR" = "Enriched in Pre-treatment UC Nonresponders")) +
+  scale_size_continuous(range = c(3,4)) +
+  coord_cartesian(xlim = de.ucprnr.celltypes.range) +
+  facet_wrap(~annotation, scales = "fixed", nrow = 2) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)",
+    title = NULL
+  ) +
+  theme_light() +
+  theme(
+    legend.text = element_text(size = 20, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 20, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"), 
+    axis.text = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+## IBD-Associated
+
+```{r}
+de.ucprnr.ibdassoc.df <- read_csv("out/deseq2/DE__UCNRvsPR_IBDAssoc.csv") %>% 
+  mutate(annotation = fct_relevel(annotation, c("IBDAssocEpi", "IBDAssocFibro", "IBDAssocMonoMac")))
+
+de.ucprnr.ibdassoc.df
+```
+
+```{r, fig.width=16, fig.height=4}
+de.ucprnr.ibdassoc.range <- de.ucprnr.ibdassoc.df$log2FoldChange %>% range %>% abs %>% max %>% ceiling
+de.ucprnr.ibdassoc.range <- c(-de.ucprnr.ibdassoc.range, de.ucprnr.ibdassoc.range)
+
+ggplot(de.ucprnr.ibdassoc.df %>% 
+         mutate(facetname = case_when(
+           annotation == "IBDAssocEpi" ~ "IBD-Associated Colonic Epithelium",
+           annotation == "IBDAssocFibro" ~ "IBD-Associated Fibroblasts",
+           annotation == "IBDAssocMonoMac" ~ "IBD-Associated Mono. and Mac."
+         )) %>% 
+         mutate(facetname = fct_relevel(facetname, c(
+           "IBD-Associated Colonic Epithelium", "IBD-Associated Fibroblasts", "IBD-Associated Mono. and Mac.")
+         )) %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(antitnf_response = ifelse(sign(stat) == 1, "NR", "PR")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, antitnf_response, "Not DE")) %>% 
+         mutate(antitnf_response = fct_relevel(antitnf_response, c("PR", "NR"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(aes(size = -log10(padj)), color = "black", seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = atnfColVec, limits = c("NR", "PR")) +
+  scale_fill_manual(values = atnfColVec, limits = c("PR", "Not DE", "NR"), 
+                    labels = c("PR" = "Enriched in Pre-treatment UC Partial Responders", 
+                               "Not DE" = "Not DE", 
+                               "NR" = "Enriched in Pre-treatment UC Nonresponders")) +
+  scale_size_continuous(range = c(3.5,3.5)) +
+  coord_cartesian(xlim = de.ucprnr.ibdassoc.range) +
+  facet_wrap(~facetname, scales = "fixed", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)",
+    title = NULL
+  ) +
+  theme_light() +
+  theme(
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 18, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"), 
+    axis.text = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+# GSEA
+
+```{r}
+gsea.ucprnr.celltypes.df <- read_csv("out/gsea/GSEA__UCNRvsPR_celltypes.csv") %>% 
+  mutate(annotation = fct_relevel(annotation, c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")))
+
+gsea.ucprnr.celltypes.df
+```
+
+# IHC
+
+```{r}
+metadata <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+## Panel 20
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+```
+
+```{r}
+p20.df.wide <- p20 %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  filter(str_ends(colon_site_ihc, "-2", negate = T))
+
+p20.df.wide
+
+p20.df.long <- p20.df.wide %>% 
+  pivot_longer(`BCMA+`:`NCR1+`, names_to = "marker", values_to = "density") 
+
+p20.df.long
+```
+
+```{r, fig.width=2.5, fig.height=3.5}
+p20.df.long %>% 
+  filter(diagSub == "UC") %>% 
+  filter(antitnf_response != "NOA") %>%
+  filter(marker == "MPO+") %>% 
+  filter(area == "WS") %>%
+  mutate(mean = mean(density, na.rm = T)) %>% 
+  mutate(se = sd(density, na.rm = T)/sqrt(n())) %>%
+  ggplot(aes(x = antitnf_response, y = density)) + 
+  geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.75, dotsize=3, aes(fill = antitnf_response)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.5, linewidth=0.6) +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6, color = "black") +
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  stat_compare_means(comparisons = list(c("PR", "NR")), label = "p.format", vjust = 1.25, size = 5.5, tip.length = 0.05) +
+  scale_x_discrete(labels = c("UC\nPR", "UC\nNR")) +
+  facet_wrap(~marker, scales = "free", nrow = 1) +
+  coord_cartesian(ylim = c(0, NA)) +
+  guides(fill = "none") +
+  labs(
+    y = "Cell Count / mm2",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Gene Expression
+
+```{r}
+seuobj.stroma <- readRDS("data/objects/annotated/predictCOL__CB_stroma_annotated_251017_v4.rds")
+seuobj.stroma
+```
+
+## Stroma
+
+```{r, fig.width=8, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj.stroma@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj.stroma",
+  features = c("CXCL1", "CXCL2", "CXCL3", "CXCL5", "CXCL6", "CXCL8"),
+  relative.to = "celltype",
+  filterCol = "cellstate",
+  filterVal = c("TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitter(width = 0.3, seed = thisseed), alpha = 0.75, size = 4) +
+  facet_grid(~featureVar) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("UC\nPR", "UC\nNR")) +
+  stat_compare_means( comparisons = list(c("PR", "NR")), label.y = 2.8,
+                      label = "p.format", vjust = 1.4, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean Gene Expression\n(IBD-Associated Fibroblasts)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+
+```{r, fig.width=4, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj.stroma@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj.stroma",
+  features = c("AREG", "IL7R"),
+  relative.to = "celltype",
+  filterCol = "cellstate",
+  filterVal = c("TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitter(width = 0.3, seed = thisseed), alpha = 0.75, size = 4) +
+  facet_grid(~featureVar) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("UC\nPR", "UC\nNR")) +
+  stat_compare_means( comparisons = list(c("PR", "NR")),
+                      label = "p.format", vjust = 1.4, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean Gene Expression\n(IBD-Associated Fibroblasts)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## Myeloid
+
+```{r}
+seuobj.myeloid <- readRDS("data/objects/annotated/predictCOL__CB_myeloid_annotated_251017_v4.rds")
+seuobj.myeloid
+```
+
+```{r, fig.width=4, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj.myeloid@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj.myeloid",
+  features = c("IL1A", "IL1B"),
+  relative.to = "celltype",
+  filterCol = "cellstate",
+  filterVal = c("Inflm. Mac", "MNP"),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitter(width = 0.3, seed = thisseed), alpha = 0.75, size = 4) +
+  facet_grid(~featureVar) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("UC\nPR", "UC\nNR")) +
+  stat_compare_means( comparisons = list(c("PR", "NR")),
+                      label = "p.format", vjust = 1.4, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean Gene Expression\n(IBD-Associated Mono. and Mac.)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## TNKILC
+
+```{r}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+```{r, fig.width=11, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj.tnkilc@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj.tnkilc",
+  features = c("MIF", "CD8B", "RORA", "CCR6", "FOXP3", "PRDM1", "IL12RB1", "JAK3"),
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("TNKILC"),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitter(width = 0.3, seed = thisseed), alpha = 0.75, size = 4) +
+  facet_grid(~featureVar) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("UC\nPR", "UC\nNR")) +
+  stat_compare_means( comparisons = list(c("PR", "NR")),
+                      label = "p.format", vjust = 1.4, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean Gene Expression\n(TNKILCs)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 18, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 18, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=8.5, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj.tnkilc@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj.tnkilc",
+  features = c("TNF", "IFNG", "IL17A", "IL21", "IL22", "IL26"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, cellsubtype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitter(width = 0.3, seed = thisseed), alpha = 0.75, size = 4) +
+  facet_grid(~featureVar) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("UC\nPR", "UC\nNR")) +
+  stat_compare_means( comparisons = list(c("PR", "NR")),
+                      label = "p.format", vjust = 1.4, label.y = 1.4, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean Gene Expression\n(Thelper Cells)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 18, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,933 @@
+---
+title: "Differential Expression, GSEA, and Gene Set Scoring"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile gene expression, differential expression, and gene set scoring outputs into a single Excel file. Differential expression files have been saved - reactome outputs need to be recalculated here.
+
+# Setup
+
+
+```{r setup}
+library(Seurat)
+library(tidyverse)
+library(plyr)
+library(scales)
+library(ggpubr)
+library(ggrepel)
+library(readxl)
+library(writexl)
+library(fgsea)
+
+thisseed <- 231103
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+read_excel_allsheets <- function(filename, tibble = TRUE) {
+    sheets <- readxl::excel_sheets(filename)
+    x <- lapply(sheets, function(X) readxl::read_excel(filename, sheet = X))
+    if(!tibble) x <- lapply(x, as.data.frame)
+    names(x) <- sheets
+    x
+}
+
+pathways <- gmtPathways("../../data/msigdb/c2.cp.reactome.v2023.2.Hs.symbols.gmt")
+
+source("../functions/ComparisonPlottingFxns.R")
+
+`%notin%` <- Negate(`%in%`)
+```
+
+
+# Read Data
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+```
+
+```{r}
+seuobj <- AddMetaData(seuobj, tcrs %>% column_to_rownames("barcode") %>% select(cdr3.TRA, cdr3.TRB))
+seuobj@meta.data %>% filter(tgroup != "Non-abT")
+```
+
+# Gene Expression
+
+## Thelper
+
+```{r}
+thelper.ccdvsuc.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>%  droplevels,
+  seurat = "seuobj",
+  features = c("TOX", "HAVCR2", "TNFRSF4", "TNFRSF18", "LAG3", "CD247", "IFNG", "TNF", "ANXA1", "CXCR3", "GZMK", "IL17A", "IL17F", "IL22", "IL26", "GNLY"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17", "Prlf. Teff"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, cellstate, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellstate,
+    group_count = denominator.freq,
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, biopsy)
+
+thelper.ccdvsuc.df
+```
+
+## Th17
+
+```{r}
+th17.ccdvsuc.df <- PlotBoxplotsFeatures(seuobj@meta.data %>% 
+                                          filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB) & timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>% 
+                                          droplevels, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     features = c("CD4", "CD8A", "IL17A"),
+                     filterCol = "cellstate",
+                     filterVal = c("Th17"),
+                     exportObservationDF = T) %>% 
+  select(barcode, featureVal, featureVar) %>% 
+  pivot_wider(names_from = featureVar, values_from = featureVal) %>%
+  left_join(., 
+            seuobj@meta.data %>% rownames_to_column("barcode") %>% select(barcode, cellstate),
+            by = "barcode") %>% 
+  dplyr::rename(
+    group = cellstate,
+  ) %>%
+  relocate(group, .after = barcode) %>% 
+  arrange(desc(group))
+  
+th17.ccdvsuc.df
+```
+
+## STAT1 and IFNG
+
+```{r}
+stat1.df <- PlotBoxplotsFeatures(seuobj@meta.data %>% filter(timepoint == "T0") %>% droplevels, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     features = "STAT1",
+                     exportSampleDF = T) %>% 
+  select(celltype, cellstate, denominator.freq, percentVal, meanVal) %>% 
+  dplyr::rename(
+    CellType = celltype,
+    group = cellstate,
+    group_count = denominator.freq,
+    expression_prop = percentVal,
+    STAT1 = meanVal
+  ) %>% 
+  arrange(desc(STAT1))
+
+stat1.df
+```
+
+```{r}
+ifng.cst.df <- PlotBoxplotsFeatures(seuobj@meta.data %>% filter(timepoint == "T0") %>% droplevels, 
+                     seurat = "seuobj",
+                     sample.col = "cellsubtype",
+                     features = sort(unique(c(
+                       rownames(seuobj)[grepl("IFNA", rownames(seuobj))],
+                       rownames(seuobj)[grepl("IFNB", rownames(seuobj))],
+                       rownames(seuobj)[grepl("IFNL", rownames(seuobj))],
+                       rownames(seuobj)[grepl("IFNG", rownames(seuobj))]
+                     ))),
+                     exportSampleDF = T) %>% 
+  select(cellsubtype, denominator.freq, featureVar, meanVal) %>% 
+  pivot_wider(names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellsubtype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group)
+  
+ifng.cst.df
+```
+
+```{r}
+cxcl9.df <- PlotBoxplotsFeatures(seuobj@meta.data %>% filter(timepoint == "T0") %>% droplevels, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     filterCol = "cellstate",
+                     filterVal = c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"),
+                     features = "CXCL9",
+                     exportSampleDF = T) %>% 
+  select(celltype, cellstate, denominator.freq, percentVal, meanVal) %>% 
+  dplyr::rename(
+    CellType = celltype,
+    group = cellstate,
+    group_count = denominator.freq,
+    expression_prop = percentVal,
+    CXCL9 = meanVal
+  ) %>% 
+  arrange(desc(CXCL9))
+
+cxcl9.df
+```
+
+## Colonic Epithelium IL-17
+
+```{r}
+colepi.diagsub.df <- PlotBoxplotsFeatures(
+    seuobj@meta.data %>% filter(timepoint == "T0") %>%  droplevels,
+    seurat = "seuobj",
+    features = c("MUC5B", "LCN2", "S100A9", "PI3", "CXCL1", "CXCL2", "CXCL3"),
+    relative.to = "celltype",
+    filterCol = "celltype",
+    filterVal = c("ColEpi"),
+    minDenomFreq = 10,
+    exportSampleDF = T,
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, celltype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = celltype,
+    group_count = denominator.freq,
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, biopsy)
+
+colepi.diagsub.df
+```
+
+## CXCL13
+
+```{r, fig.width=5, fig.height=4}
+tfh.fdc.cxcl13 <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% filter(cellsubtype == "Tfh" | cellstate == "FDC") %>% droplevels,
+  seurat = "seuobj",
+  features = "CXCL13",
+  relative.to = "cellsubtype",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(group = ifelse(cellsubtype == "Fibroblast", "FDC", as.character(cellsubtype))) %>% 
+  mutate(group = fct_relevel(group, c("Tfh", "FDC"))) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, group, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, desc(CXCL13))
+
+tfh.fdc.cxcl13
+```
+
+## Anti-TNF
+
+### cCD Pre
+
+```{r}
+ccd.pre.tnfaip6.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% 
+    mutate(atnf = ifelse(antitnf_response == "NOA", "NOA", as.character(antitnf_response))) %>% 
+    mutate(atnf = ifelse(antitnf_response %in% c("FR", "PR", "NR"), "aTNF", as.character(antitnf_response))) %>% 
+    mutate(atnf = fct_relevel(atnf, c("NOA", "aTNF"))) %>% 
+    filter(diagSub %in% c("cCD")) %>% 
+    filter(atnf != "NM") %>% 
+    filter(timepoint == "T0"),
+  seurat = "seuobj",
+  features = c("TNFAIP6"),
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("Stroma"),
+  xVar = "atnf",
+  fillVar = "atnf",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, celltype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = celltype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, desc(TNFAIP6))
+
+ccd.pre.tnfaip6.df
+```
+
+```{r}
+ccd.pre.phgdh.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% 
+    filter(diagSub %in% c("cCD")) %>% 
+    filter(antitnf_response %in% c("FR", "PR")) %>% 
+    filter(timepoint == "T0"),
+  seurat = "seuobj",
+  features = c("PHGDH"),
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("Plasma"),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, celltype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = celltype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, desc(PHGDH))
+
+ccd.pre.phgdh.df
+```
+
+### cCD Pre-Post
+
+```{r}
+ccd.prepost.thelper.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% 
+    filter(diagSub %in% c("cCD") & antitnf_response %in% c("FR", "PR") & timepoint != "R2"),
+  seurat = "seuobj",
+  features = c("TNF", "IFNG", "IL17A", "IL21", "IL22", "IL26"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  xVar = "antitnf_response",
+  fillVar = "timepoint",
+  ncol = 10,
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>%
+  select(biopsy, diagSub, antitnf_response, timepoint, cellsubtype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellsubtype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint)
+
+ccd.prepost.thelper.df
+```
+
+### UC Pre
+
+#### IBD-Associated Fibroblasts
+
+```{r}
+uc.prnr.ibdfibro.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj",
+  features = c("CXCL1", "CXCL2", "CXCL3", "CXCL5", "CXCL6", "CXCL8", "AREG", "IL7R"),
+  relative.to = "celltype",
+  filterCol = "cellstate",
+  filterVal = c("TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  minDenomFreq = 10,
+  exportSampleDF = T
+) %>%
+  select(biopsy, diagSub, antitnf_response, timepoint, celltype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = celltype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint) %>% 
+  mutate(group = "IBDAssocMonoMac")
+
+uc.prnr.ibdfibro.df
+```
+
+#### IBD-Associated MonoMac
+
+```{r}
+uc.prnr.ibdmonomac.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj",
+  features = c("IL1A", "IL1B"),
+  relative.to = "celltype",
+  filterCol = "cellstate",
+  filterVal = c("Inflm. Mac", "MNP"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+) %>%
+  select(biopsy, diagSub, antitnf_response, timepoint, celltype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = celltype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint) %>% 
+  mutate(group = "IBDAssocMonoMac")
+
+uc.prnr.ibdmonomac.df
+```
+
+#### TNKILCs
+
+```{r}
+uc.prnr.tnkilc.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj",
+  features = c("MIF", "CD8B", "RORA", "CCR6", "FOXP3", "PRDM1", "IL12RB1", "JAK3"),
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("TNKILC"),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+) %>%
+  select(biopsy, diagSub, antitnf_response, timepoint, celltype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = celltype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint)
+
+uc.prnr.tnkilc.df
+```
+
+#### THelper
+
+```{r}
+uc.prnr.thelper.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(diagSub %in% c("UC") & antitnf_response %in% c("PR", "NR") & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj",
+  features = c("TNF", "IFNG", "IL17A", "IL21", "IL22", "IL26"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  xVar = "antitnf_response",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, cellsubtype, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellsubtype,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint)
+
+uc.prnr.thelper.df
+```
+
+## Tfh
+
+### Tfh vs. Tph
+
+```{r}
+tfhtph.cellstate.df <- PlotBoxplotsFeatures(seuobj@meta.data, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     features = c("ICOS", "CCR7", "MAF", "PDCD1", "IL21", "CXCL13", 
+                                  "CXCR5", "BCL6", 
+                                  "PRDM1", "CCR5", "CCR2", "CX3CR1"),
+                     filterCol = "cellstate",
+                     filterVal = c("PD1Lo Tfh", "PD1Hi Tfh", "Prlf. Tfh"),
+                     exportObservationDF = T) %>% 
+  group_by(cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(meanVal = mean(featureVal, na.rm = T)) %>% 
+  mutate(seVal = sd(featureVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  distinct(cellstate, featureVar, .keep_all = T) %>% 
+  select(cellstate, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellstate,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group)
+  
+tfhtph.cellstate.df
+```
+
+```{r}
+tfhtph.cells.df <- PlotBoxplotsFeatures(seuobj@meta.data, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     features = c("ICOS", "CCR7", "MAF", "PDCD1", "IL21", "CXCL13", 
+                                  "CXCR5", "BCL6", 
+                                  "PRDM1", "CCR5", "CCR2", "CX3CR1"),
+                     filterCol = "cellstate",
+                     filterVal = c("PD1Lo Tfh", "PD1Hi Tfh", "Prlf. Tfh"),
+                     exportObservationDF = T) %>% 
+  select(barcode, featureVal, featureVar) %>% 
+  pivot_wider(names_from = featureVar, values_from = featureVal) %>%
+  left_join(., 
+            seuobj@meta.data %>% rownames_to_column("barcode") %>% select(barcode, cellstate),
+            by = "barcode") %>% 
+  dplyr::rename(
+    group = cellstate,
+  ) %>%
+  relocate(group, .after = barcode) %>% 
+  arrange(desc(group))
+  
+tfhtph.cells.df
+```
+
+### Tfh vs. Th17
+
+```{r}
+pd1hitfh.th17.bcellhelp.df <-  PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>% 
+    droplevels,
+  seurat = "seuobj",
+  features = c("MAF", "PDCD1", "IL21", "CXCL13"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh", "Th17"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, cellstate, denominator.freq, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:denominator.freq), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellstate,
+    group_count = denominator.freq
+  ) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint)
+
+pd1hitfh.th17.bcellhelp.df
+```
+
+## UC HLA
+
+```{r}
+selectedparticipants.hla <- c("001-036", "001-038")
+
+hla.df <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(diagSub == "UC" & timepoint == "T0") %>% droplevels,
+  seurat = "seuobj",
+  features = c("IL17A", "CXCL13"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th17", "PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants.hla, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants.hla)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants.hla, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  select(biopsy, diagSub, DRB1, alleleNum, antitnf_response, timepoint, cellstate, denominator.freq, featureVar, meanVal) %>% 
+  pivot_wider(names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    group = cellstate,
+    group_count = denominator.freq,
+    `HLA-DRB1` = DRB1,
+    Num_1501_Alleles = alleleNum,
+  ) %>% 
+  relocate(biopsy, diagSub, `HLA-DRB1`, Num_1501_Alleles,
+           antitnf_response, timepoint,group, group_count) %>% 
+  arrange(group, `HLA-DRB1`, diagSub, antitnf_response, biopsy)
+
+hla.df
+```
+
+# Combine Lists
+
+```{r}
+geneexp.out <- list(
+  "Key" = data.frame(), 
+  "GE__Thelper_UCvscCD" = thelper.ccdvsuc.df,
+  "GE__Th17_CD4CD8" = th17.ccdvsuc.df,
+  "GE__STAT1" = stat1.df,
+  "GE__IFNG" = ifng.cst.df,
+  "GE__CXCL9" = cxcl9.df,
+  "GE__ColEpi_AntimicroChemokine" = colepi.diagsub.df,
+  "GE__TfhFDC_CXCL13" = tfh.fdc.cxcl13,
+  "GE__cCD_TNFAIP6" = ccd.pre.tnfaip6.df,
+  "GE__cCD_PHGDH" = ccd.pre.phgdh.df,
+  "GE__cCD_PrevsPost_Thelper" = ccd.prepost.thelper.df,
+  "GE__UC_NRvsPR_IBDAssocMonoMac" = uc.prnr.ibdmonomac.df,
+  "GE__UC_NRvsPR_IBDAssocFibro" = uc.prnr.ibdfibro.df,
+  "GE__UC_NRvsPR_TNKILC" = uc.prnr.tnkilc.df,
+  "GE__UC_NRvsPR_Thelper" = uc.prnr.thelper.df,
+  "GE__TfhvsTph_CellStates" = tfhtph.cellstate.df,
+  "GE__TfhvsTph_Cells" = tfhtph.cells.df,
+  "GE__BCellHelp" = pd1hitfh.th17.bcellhelp.df,
+  "GE__UC_HLA" = hla.df
+  )
+  
+geneexp.out
+```
+
+# UC vs. cCD
+
+## Thelper
+
+```{r}
+de.ccduc.thelper.df <- read_csv("out/deseq2/DE__UCvscCD_Thelper.csv")
+de.ccduc.thelper.df
+```
+
+## IBD-Associated
+
+```{r}
+de.ccduc.ibdassoc.df <- read_csv("out/deseq2/DE__UCvscCD_IBDAssoc.csv")
+de.ccduc.ibdassoc.df
+```
+
+```{r}
+gsea.ccduc.ibdassoc.df <- read_csv("out/gsea/GSEA__UCvscCD_IBDAssoc.csv")
+gsea.ccduc.ibdassoc.df
+```
+
+# cCD - NOA vs. αTNF
+
+```{r}
+de.ccdnoa.celltypes.df <- read_csv("out/deseq2/DE__cCDaTNFvsNOA_celltypes.csv")
+de.ccdnoa.celltypes.df
+```
+
+# cCD - FR vs. PR
+
+```{r}
+de.ccdfrpr.celltypes.df <- read_csv("out/deseq2/DE__cCDPRvsFR_celltypes.csv")
+de.ccdfrpr.celltypes.df
+```
+
+# cCD - Pre vs. Post
+
+```{r}
+de.ccdprepost.cellatnftypes.df <- read_csv("out/deseq2/DE__cCDPostvsPre_atnfcelltypes.csv")
+de.ccdprepost.cellatnftypes.df
+```
+
+```{r}
+gsea.ccdprepost.atnfcelltypes.df <- read_csv("out/gsea/GSEA__cCDPostvsPre_atnfcelltypes.csv")
+gsea.ccdprepost.atnfcelltypes.df
+```
+
+# UC - NOA vs. αTNF 
+
+
+```{r}
+de.ucnoa.celltypes.df <- read_csv("out/deseq2/DE__UCaTNFvsNOA_celltypes.csv") 
+de.ucnoa.celltypes.df
+```
+
+```{r}
+gsea.ucnoa.celltypes.df <- read_csv("out/gsea/GSEA__UCaTNFvsNOA_celltypes.csv")
+gsea.ucnoa.celltypes.df
+```
+
+# UC - PR vs. NR
+
+## Celltypes
+
+```{r}
+de.ucprnr.celltypes.df <- read_csv("out/deseq2/DE__UCNRvsPR_celltypes.csv")
+de.ucprnr.celltypes.df
+```
+
+```{r}
+gsea.ucprnr.celltypes.df <- read_csv("out/gsea/GSEA__UCNRvsPR_celltypes.csv")
+gsea.ucprnr.celltypes.df
+```
+
+## IBD-Associcated
+
+```{r}
+de.ucprnr.ibdassoc.df <- read_csv("out/deseq2/DE__UCNRvsPR_IBDAssoc.csv")
+de.ucprnr.ibdassoc.df
+```
+
+# Combine Lists
+
+```{r}
+diffexp.out <- list(
+  "DE__UCvscCD_Thelper" = de.ccduc.thelper.df,
+  "DE__UCvscCD_IBDAssoc" = de.ccduc.ibdassoc.df,
+  "GSEA__UCvscCD_IBDAssoc" = gsea.ccduc.ibdassoc.df,
+  "DE__cCD_aTNFvsNOA" = de.ccdnoa.celltypes.df,
+  "DE__cCD_PRvsFR" = de.ccdfrpr.celltypes.df,
+  "DE__cCD_PostvsPre" = de.ccdprepost.cellatnftypes.df,
+  "GSEA__cCD_PostvsPre" = gsea.ccdprepost.atnfcelltypes.df,
+  "DE__UC_aTNFvsNOA" = de.ucnoa.celltypes.df,
+  "GSEA__UC_aTNFvsNOA" = gsea.ucnoa.celltypes.df,
+  "DE__UC_PRvsNR" = de.ucprnr.celltypes.df,
+  "GSEA__UC_PRvsNR" = gsea.ucprnr.celltypes.df,
+  "DE__UC_PRvsNR_IBDAssoc" = de.ucprnr.ibdassoc.df
+)
+
+diffexp.out
+```
+
+# Read Data
+
+## Obs
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+```{r}
+obs.dc <- obs  %>% rownames_to_column("barcode")
+obs.dc
+```
+
+
+## TNF
+
+```{r}
+tnfjak.paths <- list.files("out/decoupler/progeny/mlm_tnfjak", full.names = T)
+tnfjak.paths
+
+tnfjak.paths <- tnfjak.paths[str_detect(tnfjak.paths, "estimate.csv")]
+tnfjak.paths
+```
+
+
+```{r}
+tnfjak.list <- lapply(tnfjak.paths, function(thispath) read_csv(thispath, show_col_types = F))
+
+tnfjak.df <- plyr::ldply(tnfjak.list)
+
+tnf.df <- tnfjak.df %>% 
+  select(barcode, TNFa) %>% 
+  dplyr::rename(TNF = TNFa)
+
+tnf.df
+```
+
+```{r}
+obs.dc <- tnf.df %>% 
+  left_join(obs.dc, ., by = "barcode")
+
+obs.dc %>% select(colnames(tnf.df))
+```
+
+## IL-17
+
+
+```{r}
+il17.paths <- list.files("data/decoupler/il17/wsum_kegg", full.names = T)
+il17.paths
+```
+
+```{r}
+il17.list <- lapply(il17.paths, function(thispath) read_csv(thispath, show_col_types = F))
+
+il17.df <- plyr::ldply(il17.list)
+
+il17.df
+```
+
+```{r}
+il17.sets <- il17.df %>% colnames %>% setdiff(., "barcode")
+il17.sets
+```
+
+```{r}
+il17.names <- c("Antimicrobial", "Chemokine", "Cytokine", "Remodeling")
+names(il17.names) <- il17.sets
+il17.names
+```
+
+```{r}
+obs.dc <- il17.df %>% 
+  left_join(obs.dc, .,  by = "barcode")
+
+obs.dc %>% select(colnames(il17.df))
+```
+
+# Combine Lists
+
+```{r}
+tnf.out.obs <- obs.dc %>% 
+  filter(timepoint == "T0") %>% 
+  select(barcode, celltype, TNF) %>% 
+  dplyr::rename(CellType = celltype)
+tnf.out.obs
+```
+
+```{r}
+tnf.out.biopsies <- PlotBoxplotsFeatures(
+  obs.dc %>% 
+    filter(diagSub != "UC") %>% 
+    filter(timepoint != "R2") %>% 
+    filter(!(diagSub == "iCD" & timepoint != "T0")) %>% 
+    filter(!(diagSub == "UC" & antitnf_response == "NOA")) %>% 
+    filter(!(diagSub == "cCD" & antitnf_response == "NM")) %>% 
+    filter(!(diagSub == "cCD" & antitnf_response == "NOA")),
+  features = "TNF",
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("Myeloid", "TNKILC"),
+  xVar = "diagSub",
+  fillVar = "timepoint",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(timepoints = n_distinct(timepoint)) %>% 
+  ungroup %>% 
+  filter(!(timepoint == "R" & diagSub %notin% c("cCD", "UC"))) %>%
+  mutate(timegroup = ifelse(diagSub %in% c("cCD", "UC"), as.character(timepoint), as.character(diagSub))) %>% 
+  mutate(timegroup = ifelse(timegroup == "T0", "PreTx cCD", timegroup)) %>% 
+  mutate(timegroup = ifelse(timegroup == "R", "PostTx cCD", timegroup)) %>% 
+  mutate(timegroup = fct_relevel(timegroup, c("FGID", "iCD", "PreTx cCD", "PostTx cCD"))) %>% 
+  mutate(timepoint = ifelse(timepoint == "T0", "PreTx", "PostTx")) %>% 
+  mutate(timepoint = fct_relevel(timepoint, c("PreTx", "PostTx"))) %>% 
+  group_by(timegroup, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup()
+
+tnf.out.biopsies <- tnf.out.biopsies %>% 
+  select(biopsy, celltype, diagSub, antitnf_response, timepoint, timegroup, meanVal) %>% 
+  dplyr::rename(TNF_Score = meanVal, CellType = celltype) %>% 
+  arrange(CellType, timegroup, desc(TNF_Score))
+
+tnf.out.biopsies
+```
+
+```{r}
+il17.out.colepi <- obs.dc %>% 
+  filter(celltype == "ColEpi") %>% 
+  select(barcode, il17.sets) %>% 
+  dplyr::rename(
+    `IL17 Antimicrobial` = il17af_antimicrobial,
+    `IL17 Chemokine` = il17af_chemokines,
+    `IL17 Cytokine` = il17af_cytokines,
+    `IL17 Remodeling` = il17af_remodeling
+  )
+
+il17.out.colepi
+```
+
+```{r}
+il17.out.biopsies <- PlotBoxplotsFeatures(
+  obs.dc %>% filter(timepoint == "T0") %>%  droplevels,
+  features = il17.sets,
+  relative.to = "celltype",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(featureVar = fct_recode(featureVar, !!!setNames(names(il17.names), il17.names))) %>% 
+  group_by(celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup()
+
+il17.out.biopsies <- il17.out.biopsies %>% 
+  select(biopsy, celltype, diagSub, antitnf_response, timepoint, meanVal, featureVar) %>% 
+  pivot_wider(id_cols = c(biopsy:timepoint), names_from = featureVar, values_from = meanVal) %>% 
+  dplyr::rename(
+    `IL17_Antimicrobial` = Antimicrobial,
+    `IL17_Chemokine` = Chemokine,
+    `IL17_Cytokine` = Cytokine,
+    `IL17_Remodeling` = Remodeling,
+    CellType = celltype
+  ) %>% 
+  arrange(CellType, diagSub, antitnf_response, biopsy)
+
+il17.out.biopsies
+```
+
+```{r}
+decoupler.out <- list(
+  "DC__TNFbyCell" = tnf.out.obs,
+  "DC__TNFPrePost" = tnf.out.biopsies,
+  "DC__IL17GeneSets" = il17.out.biopsies,
+  "DC__IL17ColEpi" = il17.out.colepi
+  )
+  
+
+decoupler.out
+```
+
+# Combine All
+
+```{r}
+joint.out <- c(
+  geneexp.out,
+  diffexp.out,
+  decoupler.out
+)
+
+joint.out
+```
+
+
+```{r}
+write_xlsx(joint.out, 
+           path = "out/tables/Supplemental Table 4 - Gene Expression with DE and Gene Set Scoring.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

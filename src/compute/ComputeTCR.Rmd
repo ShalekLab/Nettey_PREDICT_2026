@@ -1,0 +1,147 @@
+---
+title: "Prepare TCR Data"
+date: "`r Sys.Date()`"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will prepare TCR data for analysis
+
+```{r setup}
+library(tidyverse)
+```
+
+
+# Preparing TCR data
+
+For this, I will start from the original data file so I can recover the framework region sequences (which are not in the paired data file to save space)
+
+## Aggregating cellranger vdj outputs
+
+```{r read_vdj_outputs}
+filteredContigsPaths <- list.files("data/cellranger_vdj",full.names = T)
+filteredContigsNames <- str_split(str_split(filteredContigsPaths,"/",simplify = T)[,3],"__",simplify = T)[,1]
+filteredContigsList <- suppressMessages(lapply(filteredContigsPaths, read_csv, show_col_types = F))
+names(filteredContigsList) <- filteredContigsNames
+
+# convert from list to data frame, but add data_folder column beforehand
+filteredContigsDF <- plyr::ldply(names(filteredContigsList),
+                                 .fun = function(name) {
+                                   filteredContigsList[[name]] %>% mutate(data_folder = name) 
+                                   }, 
+                                 .id = names(filteredContigsList) 
+                                 ) %>% relocate(data_folder, .after = barcode)
+
+filteredContigsDF
+```
+
+We'll only include TCR data if there's corresponding GEX data.
+
+```{r}
+metadata.col.gex <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata.col.gex
+```
+
+```{r}
+metadata.col.vdj <- readRDS("data/metadata/241120__predictCOL_metadata_COL_VDJ.rds")
+metadata.col.vdj
+```
+
+```{r}
+metadata.col <- left_join(
+  metadata.col.gex %>% rename(data_folder_gex = data_folder),
+  metadata.col.vdj %>% rename(data_folder_vdj = data_folder) %>% select(sample, data_folder_vdj),
+  by = "sample"
+) %>% 
+  relocate(data_folder_vdj, .after = data_folder_gex)
+
+metadata.col
+```
+
+```{r add_metadata}
+filteredContigsDF.meta <- filteredContigsDF %>% 
+  filter(data_folder %in% (metadata.col$data_folder_vdj)) %>% 
+  left_join(.,
+            metadata.col %>% select(data_folder_vdj, sample, biopsy, diagSub, antitnf_response, participant_id, timepoint),
+            by = c("data_folder" = "data_folder_vdj")) %>% 
+  relocate(sample, biopsy, diagSub, antitnf_response, participant_id, timepoint, .after = data_folder) %>%
+  mutate(barcode = paste(as.character(sample), barcode, sep = "__"))
+
+filteredContigsDF.meta
+```
+
+
+```{r write_aggregated_vdj}
+{if(!dir.exists("data/tcrs")) dir.create("data/tcr/")}
+# save the full aggregated file
+write_csv(filteredContigsDF, "data/tcr/filtered_contigs_full_241120.csv")
+
+# save a more lightweight version of the aggregated file
+write_csv(filteredContigsDF %>% select(barcode, data_folder, chain, v_gene, d_gene, j_gene, cdr3, cdr3_nt),
+          "data/tcr/filtered_contigs_trim_241120.csv")
+```
+
+## Alpha-beta pairing
+
+10x support notes that there can be multiple TRA/TRB in a barcode: https://kb.10xgenomics.com/hc/en-us/articles/360000259692-Can-we-tell-which-barcodes-GEMs-contain-more-than-one-cell-for-V-D-J-libraries-
+
+The summary of the article is that the rate of double chains is low, but it could represent true biology. For simplicity, I'll try to select the most abundant alpha and beta chains when multiple are detected
+
+The algorithm for resolving multiple barcodes will be (in order of what to do when multiple are detected and ties result): 
+1. select most UMIs
+2. select most reads
+3. choose first sequence listed
+
+Will also filter out rows that lack a raw_clonotype id as they only have cdr3 sequence (no cdr1/2, fwr1/2/3/4) and there is less confidence in their quality.
+
+```{r pair_VDJ}
+# choose columns that will have the same value regardless of alpha or beta chain
+idColumnsToKeep <- c("barcode", "data_folder", "raw_clonotype_id", "exact_subclonotype_id", 
+                     "sample", "biopsy", "diagSub", "antitnf_response", "participant_id", "timepoint")
+
+# choose columns that will have different values depending on alpha or beta chain
+valColumnsToKeep <- c("v_gene","d_gene","j_gene","c_gene",
+                      "fwr1","cdr1","fwr2","cdr2","fwr3","cdr3","fwr4",
+                      "fwr1_nt","cdr1_nt","fwr2_nt","cdr2_nt","fwr3_nt","cdr3_nt","fwr4_nt",
+                      "reads","umis")
+
+# go through the algorithm described above. takes a few minutes to complete 
+filteredContigsPaired.long <- filteredContigsDF.meta %>% 
+  filter(raw_clonotype_id != "") %>%  # remove rows that only have cdr3 (I have less confidence in these)
+  select(all_of(idColumnsToKeep), chain, all_of(valColumnsToKeep)) %>% # reduce the dataframe size
+  group_by(barcode, chain) %>%  # group by cell and chain, to parse through cells with multiple chains
+  slice_max(n = 1, order_by = umis) %>% 
+  slice_max(n = 1, order_by = reads, with_ties = F)
+
+# convert to wide format, so that each row is a cell and there's information from both alpha and beta on each row
+filteredContigsPaired.wide <- filteredContigsPaired.long %>% 
+  pivot_wider(id_cols = idColumnsToKeep, 
+              names_from = chain, 
+              names_sep = ".", 
+              values_from = all_of(valColumnsToKeep)
+              ) %>% 
+  ungroup() %>% 
+  arrange(barcode)
+
+filteredContigsPaired.wide
+```
+
+```{r}
+filteredContigsPaired.out <- filteredContigsPaired.wide %>% select(-raw_clonotype_id:-timepoint)
+filteredContigsPaired.out
+```
+
+
+```{r write_paired_VDJ}
+write_csv(filteredContigsPaired.out, 
+          "data/tcr/filtered_contigs_paired_241120.csv")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

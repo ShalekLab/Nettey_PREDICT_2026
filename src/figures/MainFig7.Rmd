@@ -1,0 +1,742 @@
+---
+title: "Main Figure 7"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Main Figure 7
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggpubr)
+library(ggrepel)
+library(ggpmisc)
+library(ggseqlogo)
+library(Seurat)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+alakazamfeatures <- c("Hydrophobicity", "Size", "Aliphatic", "Polarity")
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds") %>% 
+  rownames_to_column("barcode")
+
+obs
+```
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+
+obs <- left_join(obs, tcrs %>% select(-data_folder), by = "barcode")
+obs
+```
+
+
+```{r}
+tirp <- read_csv("out/tcr/tirp/241120_predictCOL_tirp.csv")
+tirp
+
+obs <- left_join(obs, tirp %>% distinct(cdr3, .keep_all = T), by = c("cdr3.TRB" = "cdr3"))
+obs
+```
+
+
+```{r}
+alakazam <- read_csv("out/tcr/alakazam/cdr3b_mr_alakazam_scored_241120.csv")
+alakazam
+
+obs <- obs %>%
+  mutate(cdr3.len = nchar(cdr3.TRB)) %>%
+  mutate(cdr3mr = ifelse(cdr3.len >= 12 & cdr3.len <= 17, substr(cdr3.TRB, 5, nchar(cdr3.TRB) - 6), NA))
+  
+obs <- obs %>% 
+  left_join(alakazam, by = "cdr3mr") %>%
+  filter(!is.na(cdr3mr)) %>% 
+  mutate(
+    across(
+      .cols = c(cdr3mr_aa_gravy, cdr3mr_aa_bulk, cdr3mr_aa_aliphatic, cdr3mr_aa_polarity),
+      .fns = ~(ifelse(!is.na(cdr3mr), (. - mean(., na.rm = T))/sd(., na.rm = T), NA)),
+      # .fns = ~(. - mean(., na.rm = T)/sd(., na.rm = T)),
+      .names = "{.col}.norm"
+    )
+  ) %>%
+  dplyr::rename(Hydrophobicity = cdr3mr_aa_gravy.norm, Size = cdr3mr_aa_bulk.norm, Aliphatic = cdr3mr_aa_aliphatic.norm, Polarity = cdr3mr_aa_polarity.norm) %>% 
+  select(cdr3mr, Hydrophobicity, Size, Aliphatic, Polarity) %>% 
+  distinct(cdr3mr, .keep_all = T, by = "cdr3mr") %>% 
+  left_join(obs, .)
+
+obs %>% filter(!is.na(cdr3.TRB))
+```
+
+# Logo plot
+
+```{r, fig.retina=TRUE, fig.width=21, fig.height=15}
+ggseqlogo(
+  obs %>% 
+    mutate(length = nchar(cdr3.TRB)) %>% 
+    filter(length == 15 & !is.na(cdr3.TRB)) %>%
+    filter(tgroup == "CD4T") %>% 
+    filter(timepoint == "T0") %>% 
+    pull(cdr3.TRB),
+  seq_type = "aa",
+  method = "prob",
+  col_scheme = "chemistry"
+) + 
+  labs(
+    x = "CDR3β Position"
+  ) +
+  theme(
+    axis.text.y = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(size = 60, face = "bold"),
+    axis.title.x = element_text(size = 60, face = "bold"),
+    legend.position = "none"
+  )
+```
+
+# Alakazam
+
+```{r, fig.width=8, fig.height=5}
+PlotBoxplotsFeatures(
+  obs %>% filter(timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = c("Hydrophobicity", "Size", "Aliphatic", "Polarity"),
+  filterCol = "tgroup",
+  filterVal = "CD4T",
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(.,
+         aes(x = diagSub, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(aes(fill = diagSub), shape = 21, size = 3, position = position_jitterdodge(jitter.width = 0.3)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  facet_wrap(~featureVar, scales = "fixed", ncol = 4) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label.y = c(0.29, 0.33, 0.37, 0.41),
+                     label = "p.format", vjust = 1.75, size = 4, tip.length = 0.025) +
+  guides(fill = "none") +
+  labs(
+    y = "Mean Normalized Middle-Region Score\n(CD4T Cells)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 12, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# mTiRP
+
+## CD4 T Cells
+
+```{r, fig.width=3.5, fig.height=5}
+PlotBoxplotsFeatures(
+  obs %>% filter( timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "tgroup",
+  filterCol = "tgroup",
+  filterVal = "CD4T",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = diagSub, y = meanVal,)) +
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(aes(fill = diagSub), size = 3, shape = 21, position = position_jitterdodge(jitter.width = 0.3)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  facet_grid(~featureVar, scales = "free_y") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp,
+                     label = "p.format", vjust = 1.25, size = 7, tip.length = 0.05) +
+  guides(fill = "none", color = "none") +
+  labs(
+    y = "Mean Score (CD4 T Cells)",
+    size = "# Cells",
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## Cell Subtypes
+
+```{r, fig.width=7, fig.height=5}
+PlotBoxplotsFeatures(
+  obs %>% filter(timepoint == "T0" & !is.na(cdr3.TRB) & cellsubtype %in% c("Thelper", "Tfh", "Treg")) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellsubtype",
+  filterCol = "tgroup",
+  filterVal = "CD4T",
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, featureVar, celltype, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = diagSub, y = meanVal)) +
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(aes(fill = diagSub), shape = 21, size = 3, position = position_jitterdodge(jitter.width = 0.3)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  facet_grid(~cellsubtype, scales = "free_y") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label.y = c(0.225,0.25,0.275,0.3),
+                     label = "p.format", vjust = 1.5, size = 5,  tip.length = 0.05) +
+  guides(fill = "none", color = "none") +
+  labs(
+    y = "Mean mTiRP Score",
+    size = "# Cells",
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## Tfh Cells
+
+```{r, fig.width=7.5, fig.height=5}
+PlotBoxplotsFeatures(
+  obs %>% filter(timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Lo Tfh", "PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = cellstate, y = meanVal, fill = diagSub, group = cellstate)) +
+  geom_bar(stat = "summary", fun = "mean", 
+           aes(fill = cellstate), color = "black", fill = "gray90") +
+  geom_point(stroke = 1, size = 4, shape = 21, position = position_jitterdodge(jitter.width = 0.3)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1, position=position_jitterdodge(jitter.width = 0)) +
+  facet_wrap(~diagSub, scales = "fixed", ncol = 4) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_x_discrete(labels = c("PD1Lo\nTfh", "PD1Hi\nTfh")) +
+  stat_compare_means(comparisons = list(c("PD1Lo Tfh", "PD1Hi Tfh")), label = "p.format", vjust=1.25, hjust=0.375, size = 6) +
+  guides(fill = "none", color = "none") +
+  labs(
+    y = "Mean mTiRP Score",
+    size = "# Cells",
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+### Expansion
+
+
+```{r}
+obs.exp <- obs %>% 
+  filter(celltype == "TNKILC") %>% 
+  group_by(biopsy, cdr3.TRA) %>% 
+  mutate(count.cdr3a = n()) %>% 
+  mutate(count.cdr3a = ifelse(is.na(cdr3.TRA), NA, count.cdr3a)) %>% 
+  group_by(biopsy, cdr3.TRB) %>% 
+  mutate(count.cdr3b = n()) %>% 
+  mutate(count.cdr3b = ifelse(is.na(cdr3.TRB), NA, count.cdr3b)) %>% 
+  mutate(cdr3 = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  mutate(cdr3 = ifelse(cdr3 == "NA_NA", NA, cdr3)) %>% 
+  group_by(biopsy, cdr3) %>% 
+  mutate(count.cdr3 = n()) %>% 
+  mutate(count.cdr3 = ifelse(is.na(cdr3.TRA) | is.na(cdr3.TRB), NA, count.cdr3)) %>% 
+  ungroup %>% 
+  mutate(expanded.alpha = case_when(
+    count.cdr3a > 1 ~ "Expanded",
+    count.cdr3a == 1 ~ "Singlet",
+    is.na(count.cdr3a) ~ NA
+  )) %>% 
+  mutate(expanded.beta = case_when(
+    count.cdr3b > 1 ~ "Expanded",
+    count.cdr3b == 1 ~ "Singlet",
+    is.na(count.cdr3b) ~ NA
+  )) %>% 
+  mutate(expanded.paired = case_when(
+    count.cdr3 > 1 ~ "Expanded",
+    count.cdr3 == 1 ~ "Singlet",
+    is.na(count.cdr3) ~ NA
+  ))
+  
+
+obs.exp %>% filter(cellstate == "PD1Hi Tfh") %>%  select(cdr3.TRA, count.cdr3a, expanded.alpha) %>% filter(!is.na(expanded.alpha))
+obs.exp %>% filter(cellstate == "PD1Hi Tfh") %>%  select(cdr3.TRB, count.cdr3b, expanded.beta) %>% filter(!is.na(expanded.beta))
+obs.exp %>% filter(cellstate == "PD1Hi Tfh") %>%  select(cdr3, count.cdr3, expanded.paired) %>% filter(!is.na(expanded.paired))
+```
+
+```{r, fig.width=7.5, fig.height=5}
+obs.exp %>% 
+  filter(cellstate == "PD1Hi Tfh") %>% 
+  filter(timepoint == "T0") %>% 
+  filter(!is.na(count.cdr3)) %>% 
+  mutate(expanded.paired = fct_relevel(expanded.paired, c("Singlet", "Expanded"))) %>% 
+  group_by(diagSub, expanded.paired, cellstate, .drop = FALSE) %>% 
+  mutate(mean = mean(mTiRP, na.rm = T)) %>% 
+  mutate(se = sd(mTiRP, na.rm = T)/sqrt(n())) %>%
+  ungroup %>% 
+  ggplot(aes(x = expanded.paired, y = mTiRP, fill = expanded.paired)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se, color = diagSub), color = "black", width=0.3, linewidth=1, position=position_jitterdodge(jitter.width = 0)) +
+  coord_cartesian(ylim = c(-0.125,0.325)) +
+  facet_grid(~diagSub) + 
+  stat_compare_means(comparisons = list(c("Singlet", "Expanded")), label.y = 0.025, method = "t.test", size = 6, vjust = 1.4, tip.length = 0.0025) +
+  scale_fill_manual(values = c("Expanded" = "pink", "Singlet" = "cyan")) +
+  scale_x_discrete(labels = c("Singlet\nCells", "Expanded\nCells")) +
+  scale_color_manual(values = diagSubColVec) +
+  guides(fill = "none", color = "none") +
+  labs(
+    y = "PD1Hi Tfh mTiRP Score"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+### Anti-TNF
+
+```{r, fig.width=2.75, fig.height=4.5}
+PlotBoxplotsFeatures(
+  obs %>% filter(diagSub == "UC" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, antitnf_response, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  mutate(timepoint = ifelse(timepoint == "T0", "PreTx", "PostTx")) %>% 
+  mutate(timepoint = fct_relevel(timepoint, c("PreTx", "PostTx"))) %>% 
+  ggplot(aes(x = antitnf_response, y = meanVal)) +
+  geom_bar(stat = "summary", fun = "mean", 
+           color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  geom_point(aes(fill = antitnf_response, shape = timepoint), stroke = 1, size = 5, 
+             position = position_jitter(height = 0, width = 0.2, seed = thisseed+1)) +
+  facet_wrap(~cellstate, scales = "fixed", ncol = 4) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_shape_manual(values = c("PreTx" = 21, "PostTx" = 23)) +
+  stat_compare_means(label = "p.format", vjust=1.25, size = 5.5) +
+  labs(
+    x = NULL,
+    y = "Mean mTiRP Score",
+    size = "# Cells",
+    shape = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  guides(fill = "none") +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## Regressions
+
+### Cell Frequencies
+
+```{r, fig.width=7, fig.height=4, fig.retina=TRUE}
+SenderReceiver(
+  obs %>% filter(diagSub != "iCD" & timepoint == "T0") %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    droplevels,
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate",
+  receiverVal = "Atyp. MBC",
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+) %>% 
+  ggplot(aes(x = senderExp, y = prop.receiver)) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")), size = 4.5, vjust=0.5) +
+  geom_point(aes(fill = diagSub), size = 3.5, shape = 21, color = "black", stroke = 1.5, alpha = 0.9) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = percent, breaks = c(0, 0.25, 0.5, 0.75)) +
+  facet_grid(~diagSub, scales = "free") +
+  guides(
+    fill = "none",
+    color = "none"
+    ) +
+  labs(
+    x = "PD1Hi Tfh Mean mTiRP Score", 
+    y = "Atypical MBC %\n(Relative to B Cells)", 
+    size = "# Cells", 
+    shape = NULL,
+    fill = NULL,
+    color = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 24, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.5, "cm")
+  )
+```
+
+
+```{r, fig.width=7, fig.height=4, fig.retina=TRUE}
+SenderReceiver(
+  obs %>% 
+    filter(diagSub != "iCD" & timepoint == "T0") %>% 
+    mutate(cellstate.b = ifelse(cellstate %in% c("GC-like BC", "Prlf. BC"), "TLS-like BC", as.character(cellstate))) %>% 
+    mutate(cellstate.b = as.factor(cellstate.b)) %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate.b",
+  receiverVal = "TLS-like BC",
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+) %>% 
+  ggplot(aes(x = senderExp, y = prop.receiver)) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")), size = 4.5, vjust=0.5, rsquared.conf.level = 0.999) +
+  geom_point(aes(fill = diagSub), size = 3.5, shape = 21, color = "black", stroke = 1.5, alpha = 0.9) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = percent, breaks = c(0, 0.25, 0.5, 0.75)) +
+  facet_grid(~diagSub, scales = "free") +
+  guides(
+    fill = "none",
+    color = "none"
+    ) +
+  labs(
+    x = "PD1Hi Tfh Mean mTiRP Score", 
+    y = "TLS-like BC % (Relative to B Cells)", 
+    size = "# Cells", 
+    shape = NULL,
+    fill = NULL,
+    color = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 24, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.5, "cm")
+  )
+```
+
+```{r, fig.width=7, fig.height=4, fig.retina=TRUE}
+SenderReceiver(
+  obs %>% filter(diagSub != "iCD" & timepoint == "T0") %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    droplevels,
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate",
+  receiverVal = "IgG1 PC",
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+) %>% 
+  ggplot(aes(x = senderExp, y = prop.receiver)) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")), size = 4.5, vjust=0.5) +
+  geom_point(aes(fill = diagSub), size = 3.5, shape = 21, color = "black", stroke = 1.5, alpha = 0.9) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = percent, breaks = c(0, 0.25, 0.5, 0.75)) +
+  facet_grid(~diagSub, scales = "free") +
+  guides(
+    fill = "none",
+    color = "none"
+    ) +
+  labs(
+    x = "PD1Hi Tfh Mean mTiRP Score", 
+    y = "IgG1 PC %\n(Relative to PCs)", 
+    size = "# Cells", 
+    shape = NULL,
+    fill = NULL,
+    color = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 24, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.5, "cm")
+  )
+```
+
+### Th17 Expression
+
+```{r}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+```{r}
+seuobj.tnkilc <- AddMetaData(seuobj.tnkilc, obs %>% column_to_rownames("barcode") %>% select(cdr3.TRB, mTiRP))
+seuobj.tnkilc@meta.data
+```
+
+
+```{r, fig.width=26, fig.height=7}
+SenderReceiver(
+  seuobj.tnkilc@meta.data %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    filter(diagSub %in% c("UC")) %>% 
+    droplevels,
+  seurat = "seuobj.tnkilc",
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate",
+  receiverVal = "Th17",
+  features.receiver = c("IL17A", "IL17F", "IL21", "IL22", "IL26"),
+  receiverProp = FALSE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+) %>% 
+  mutate(timepoint = str_split(biopsy, "_", simplify = T)[,2]) %>% 
+  mutate(timepoint = ifelse(timepoint == "T0", "PreTx", "PostTx")) %>% 
+  mutate(timepoint = fct_relevel(timepoint, c("PreTx", "PostTx"))) %>% 
+  mutate(receiverName = str_replace(receiverName, "_", " - ")) %>% 
+  ggplot(aes(x = senderExp, y = receiverExp)) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_shape_manual(values = c("PreTx" = 21, "PostTx" = 23)) +
+  expand_limits(x = c(0,0.25)) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")), size = 9, hjust=-0.2) +
+  geom_point(aes(fill = antitnf_response, shape = timepoint), size = 8, color = "black", stroke = 1.5, alpha = 0.9) +
+  facet_grid(~receiverName, scales = "free") +
+  guides(
+    fill = guide_legend(override.aes = list(shape = 21)), 
+    color = "none"
+    ) +
+  labs(
+    x = "Mean mTiRP Score (PD1Hi Tfh)", 
+    y = "Mean Gene Expression\n(Th17 Cells)", 
+    size = "# Cells", 
+    shape = NULL,
+    fill = NULL,
+    color = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 20, face = "bold", angle = 0),
+    axis.text.y = element_text(size = 24, face = "bold"),
+    axis.title.x = element_text(size = 30, face = "bold"),
+    axis.title.y = element_text(size = 30, face = "bold"),
+    panel.spacing.x = unit(1, "cm"),
+    legend.position = "right",
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.key.spacing.y = unit(0.25, "cm"),
+    strip.text = element_text(size = 30, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1)
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

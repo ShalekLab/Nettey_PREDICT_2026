@@ -1,0 +1,369 @@
+---
+title: "Supplemental Figure 6"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 6
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(ggpmisc)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colCelltypes <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+names(colCelltypes) <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+# Gene Expression
+
+```{r, fig.width=6.5, fig.height=28}
+PlotBoxplotsFeatures(seuobj@meta.data %>% filter(timepoint == "T0") %>% droplevels, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     features = "STAT1",
+                     exportSampleDF = T) %>% 
+ggplot(aes(x = meanVal, y = reorder(cellstate, meanVal))) + 
+  geom_col(aes(
+    color = celltype,
+    fill = ifelse(cellstate %in% c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"), 
+                  "darkred", "gray70")),
+    lwd = 1) +
+  geom_text(aes(label = percent(percentVal, 0.1)), size = 5.5, fontface="bold", nudge_x=0.155, hjust = 0.5, color="black") +
+  # geom_text(aes(label = cellstate_count,fontface="bold")) + 
+  scale_y_discrete() +
+  scale_x_continuous(trans = "identity", breaks = pretty_breaks(5), expand=expand_scale(add=c(0,0.155))) +
+  scale_fill_manual(values = c("gray70" = "gray70", "darkred" = "darkred")) +
+  scale_color_manual(values = colCelltypes) +
+  # scale_fill_gradient(low = "gray80", high = "lightpink") +
+  # scale_fill_viridis_c(option = "magma") +
+  theme_minimal() +
+  labs(
+    x = "Mean Log-Normalized STAT1 Expression"
+  ) +
+  theme(
+    # panel.grid = element_blank(),
+    axis.title.x = element_text(size=16, face = "bold"),
+    axis.text.x = element_text(size=16, face = "bold"),
+    axis.text.y = element_text(size=14, face = "bold"),
+    legend.position = "top",
+    legend.justification = "right",
+    legend.text = element_text(size = 14, face = "bold"),
+    plot.margin = unit(c(0.25,0,0.25, 0.25), "cm")
+  ) +
+  labs(y = NULL, fill = NULL, color = NULL) + 
+  guides(fill = "none", color = guide_legend(nrow = 1))
+```
+
+```{r, fig.width=15, fig.height=7}
+PlotBoxplotsFeatures(seuobj@meta.data %>% filter(timepoint == "T0") %>% droplevels, 
+                     seurat = "seuobj", 
+                     sample.col = "cellsubtype",
+                     features = setdiff(sort(unique(c(
+                       rownames(seuobj)[grepl("IFNA", rownames(seuobj))],
+                       rownames(seuobj)[grepl("IFNB", rownames(seuobj))],
+                       rownames(seuobj)[grepl("IFNL", rownames(seuobj))],
+                       rownames(seuobj)[grepl("IFNG", rownames(seuobj))]
+                     ))),"IFNG-AS1"),
+                     exportSampleDF = T)  %>% 
+  ggplot(aes(x = cellsubtype, y = featureVar, fill = meanVal)) +
+  geom_tile(color = "gray50", lwd = 0.5) +
+  guides(color = "none") +
+  scale_y_discrete(limits = rev) +
+  scale_fill_viridis_c(option = "magma", breaks = seq(0, 1, 0.2)) + 
+  labs(fill = "Mean Log-Norm. Exp.") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 16, face = "bold", angle = 45, hjust=1),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_blank(),
+    axis.ticks.x = element_line(),
+    axis.ticks.length = unit(0.25, "cm"),
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold", vjust=0.85),
+    legend.position = "top",
+    plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm")
+    ) + 
+  guides(fill = guide_colorbar(barwidth = 30))
+```
+
+# Regressions
+
+
+```{r, fig.width=16, fig.height=14}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0"),
+  senderCol = "cellsubtype",
+  senderVal = c("Thelper", "NK", "CTL", "InvariantT"),
+  features.sender = c("IFNG"),
+  senderProp = FALSE,
+  xLab = "STAT1 Expresion",
+  receiverCol = "cellstate",
+  receiverVal = c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"),
+  features.receiver = c("STAT1"),
+  receiverProp = FALSE,
+  yLab = "IFNG Expression",
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+  ) %>% 
+  ggplot(aes(x = receiverExp, y = senderExp)) +
+  geom_point(shape = 21, aes(fill = diagSub), size = 4) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2","P")), size=6) + 
+  scale_fill_manual(values = diagSubColVec) +
+  scale_x_continuous(breaks = pretty_breaks(3)) +
+  scale_y_continuous(breaks = pretty_breaks(3)) +
+  facet_grid(senderName~receiverName, scales = "free") +
+  labs(
+    y = "IFNG Expression",
+    x = "STAT1 Expression",
+    fill = NULL
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.25, "cm")
+  )
+```
+
+```{r, fig.width=16, fig.height=4.5}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% filter(diagSub %in% c("cCD", "UC")),
+  senderCol = "cellsubtype",
+  senderVal = c("Thelper"),
+  features.sender = c("IFNG"),
+  senderProp = FALSE,
+  xLab = "STAT1 Expresion",
+  receiverCol = "cellstate",
+  receiverVal = c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"),
+  features.receiver = c("STAT1"),
+  receiverProp = FALSE,
+  yLab = "IFNG Expression",
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+  ) %>% 
+  ggplot(aes(x = receiverExp, y = senderExp)) +
+  geom_point(shape = 21, aes(fill = diagSub), size = 4) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2","P")), size=6) + 
+  scale_fill_manual(values = diagSubColVec) +
+  scale_x_continuous(breaks = pretty_breaks(3)) +
+  scale_y_continuous(breaks = pretty_breaks(3)) +
+  facet_grid(senderName~receiverName, scales = "free") +
+  labs(
+    y = "IFNG Expression",
+    x = "STAT1 Expression",
+    fill = NULL
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.25, "cm")
+  )
+```
+
+
+```{r, fig.width=6.5, fig.height=4}
+PlotBoxplotsFeatures(seuobj@meta.data %>% filter(timepoint == "T0") %>% droplevels, 
+                     seurat = "seuobj", 
+                     sample.col = "cellstate",
+                     filterCol = "cellstate",
+                     filterVal = c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"),
+                     features = "CXCL9",
+                     exportSampleDF = T) %>% 
+ggplot(aes(x = meanVal, y = reorder(cellstate, meanVal))) + 
+  geom_col(aes(
+    color = celltype,
+    fill = ifelse(cellstate %in% c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"), 
+                  "darkred", "gray70")),
+    lwd = 1) +
+  geom_text(aes(label = percent(percentVal, 0.1)), size = 5.5, fontface="bold", nudge_x=0.155, hjust = 0.5, color="black") +
+  # geom_text(aes(label = cellstate_count,fontface="bold")) + 
+  scale_y_discrete() +
+  scale_x_continuous(trans = "identity", breaks = pretty_breaks(5), expand=expand_scale(add=c(0,0.155))) +
+  scale_fill_manual(values = c("gray70" = "gray70", "darkred" = "darkred")) +
+  scale_color_manual(values = colCelltypes) +
+  # scale_fill_gradient(low = "gray80", high = "lightpink") +
+  # scale_fill_viridis_c(option = "magma") +
+  theme_minimal() +
+  labs(
+    x = "Mean Log-Normalized CXCL9 Expression"
+  ) +
+  theme(
+    # panel.grid = element_blank(),
+    title = element_text(size=16, face = "bold"),
+    axis.title.x = element_text(size=16, face = "bold"),
+    axis.text.x = element_text(size=16, face = "bold"),
+    axis.text.y = element_text(size=14, face = "bold"),
+    legend.position = "top",
+    # legend.justification = "right",
+    legend.text = element_text(size = 14, face = "bold"),
+    plot.margin = unit(c(0.25,0,0.25, 0.25), "cm")
+  ) +
+  labs(y = NULL, fill = NULL, color = NULL) + 
+  guides(fill = "none", color = guide_legend(nrow = 1))
+```
+
+```{r, fig.width=6.5, fig.height=4}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0"),
+  senderCol = "cellsubtype",
+  senderVal = c("Thelper"),
+  features.sender = c("IFNG"),
+  senderProp = FALSE,
+  receiverCol = "cellstate",
+  receiverVal = c("TFPI2Hi Fibro.", "Inflm. Mac"),
+  features.receiver = c("CXCL9"),
+  receiverProp = FALSE,
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+  ) %>% 
+  ggplot(aes(x = receiverExp, y = senderExp)) +
+  geom_point(shape = 21, aes(fill = diagSub), size = 4, alpha = 0.75) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2","P")), size=5) + 
+  scale_fill_manual(values = diagSubColVec) +
+  scale_x_continuous(breaks = pretty_breaks(3)) +
+  scale_y_continuous(breaks = pretty_breaks(3)) +
+  facet_grid(senderName~receiverName, scales = "free") +
+  labs(
+    y = "IFNG Expression",
+    x = "CXCL9 Expression",
+    fill = NULL
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.25, "cm")
+  )
+```
+
+```{r, fig.width=6.5, fig.height=4}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% filter(diagSub %in% c("cCD", "UC")),
+  senderCol = "cellsubtype",
+  senderVal = c("Thelper"),
+  features.sender = c("IFNG"),
+  senderProp = FALSE,
+  receiverCol = "cellstate",
+  receiverVal = c("TFPI2Hi Fibro.", "Inflm. Mac"),
+  features.receiver = c("CXCL9"),
+  receiverProp = FALSE,
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+  ) %>% 
+  ggplot(aes(x = receiverExp, y = senderExp)) +
+  geom_point(shape = 21, aes(fill = diagSub), size = 4, alpha = 0.75) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2","P")), size=5) + 
+  scale_fill_manual(values = diagSubColVec) +
+  scale_x_continuous(breaks = pretty_breaks(3)) +
+  scale_y_continuous(breaks = pretty_breaks(3)) +
+  facet_grid(senderName~receiverName, scales = "free") +
+  labs(
+    y = "IFNG Expression",
+    x = "CXCL9 Expression",
+    fill = NULL
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.25, "cm")
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```
+
+# GSEA

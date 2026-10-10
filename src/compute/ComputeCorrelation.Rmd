@@ -1,0 +1,319 @@
+---
+title: "Compute Correlation"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compute correlation values
+
+# Setup
+
+
+```{r setup}
+library(tidyverse)
+library(scales)
+library(ggpubr)
+library(viridis)
+library(RColorBrewer)
+library(ggraph)
+library(tidygraph)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+colCellgroups <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+names(colCellgroups) <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+
+source("../functions/ComparisonPlottingFxns.R")
+
+`%notin%` <- Negate(`%in%`)
+
+logInf <- function(x){ifelse(x == 0, log(1/1000), log(x))}
+
+moveNode <- function(thistblgraph, name, xnudge = 0, ynudge = 0){
+  thisrow <- which(thistblgraph$name == name)
+  thistblgraph[thisrow,"x"] <- thistblgraph[thisrow,"x"] + xnudge
+  thistblgraph[thisrow,"y"] <- thistblgraph[thisrow,"y"] + ynudge
+  return(thistblgraph)
+}
+```
+
+
+# Read Data
+
+## Obs
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+```{r}
+selectedstates <- c("Th1", "Th17", "PD1Hi Tfh")
+```
+
+## Correlations
+
+```{r}
+CellFreqDF <- PlotBoxplotsProp(df = obs %>% 
+                                 filter(timepoint == "T0") %>% 
+                                 add_count(cellstate, name = "cellstate_count") %>% filter(cellstate_count >= 100) %>%
+                                 droplevels,
+                 ann.col = "cellstate", 
+                 relative.to = "celltype", 
+                 exportDF = T
+                ) %>% 
+  complete(biopsy, cellstate, fill = list(annotation.freq = 0, denominator.freq = 0, prop = 0), explicit = TRUE) %>% 
+  group_by(biopsy) %>% 
+  fill(diagSub) %>% 
+  group_by(cellstate) %>% 
+  fill(celltype) %>% 
+  ungroup
+
+CellFreqDF
+```
+
+
+```{r}
+compare.vector <- CellFreqDF$cellstate %>% unique %>% as.character 
+compare.vector
+
+CompareDF <- CellFreqDF %>%
+    filter(cellstate %in% compare.vector) %>%
+    mutate(cellstate = as.character(cellstate)) %>%
+    pivot_wider(id_cols = biopsy, names_from = cellstate, values_from = prop) %>% 
+  mutate(across(.cols = c(everything(), -one_of("biopsy")), .fn = ~ifelse(is.na(.), 0, .)))
+
+CompareDF
+```
+
+```{r}
+CellCorDF.pearson <- CellFreqDF %>% 
+    filter(cellstate %in% selectedstates) %>% 
+    left_join(., CompareDF, by = "biopsy") %>%
+    group_by(cellstate) %>%
+    mutate(
+        across(
+            .cols = all_of(compare.vector),
+            .fns = ~cor(., prop, method = "pearson")
+        )
+    ) %>%
+    ungroup %>%
+    distinct(cellstate, .keep_all=T) %>%
+    arrange(cellstate, .locale = "en") %>%
+    select(cellstate, all_of(compare.vector))
+
+CellCorDF.pearson
+
+CellCorMat.pearson <- CellCorDF.pearson %>% arrange(cellstate, .locale = "en") %>% column_to_rownames("cellstate") %>% as.matrix
+```
+
+```{r}
+CellCorDF.pearson.sig <- CellFreqDF %>% 
+    filter(cellstate %in% selectedstates) %>% 
+    left_join(., CompareDF, by = "biopsy") %>%
+    group_by(cellstate) %>%
+    mutate(
+        across(
+            .cols = all_of(compare.vector),
+            .fns = ~cor.test(., prop, method = "pearson")$p.value
+        )
+    ) %>%
+    ungroup %>%
+    distinct(cellstate, .keep_all=T) %>%
+    arrange(cellstate, .locale = "en") %>%
+    select(cellstate, all_of(compare.vector))
+
+CellCorDF.pearson.sig
+
+CellCorMat.pearson.sig <- CellCorDF.pearson.sig %>% column_to_rownames("cellstate") %>% as.matrix
+```
+
+
+```{r}
+corr.list <- lapply(rownames(CellCorMat.pearson), function(x) {
+  intersect(which(CellCorMat.pearson.sig[x,] <= 1e-3) %>% names, which(CellCorMat.pearson[x,] > 0) %>% names)
+})
+names(corr.list) <- rownames(CellCorMat.pearson)
+corr.list
+```
+
+```{r}
+selectedCorrList <- lapply(corr.list, function(thesecellstates) {
+
+selectedCorrDF <- CellFreqDF %>% 
+    filter(cellstate %in% thesecellstates) %>% 
+  droplevels %>% 
+    left_join(., CompareDF %>% select(biopsy, all_of(thesecellstates)), by = "biopsy") %>%
+    group_by(cellstate) %>%
+    mutate(
+        across(
+            .cols = all_of(thesecellstates),
+            .fns = ~cor(., prop, method = "pearson")
+        )
+    ) %>%
+    ungroup %>%
+    distinct(cellstate, .keep_all=T) %>%
+    arrange(cellstate, .locale = "en") %>%
+    select(cellstate, all_of(thesecellstates))
+
+selectedCorrDF
+
+})
+```
+
+```{r}
+selectedCorrListSig <- lapply(corr.list, function(thesecellstates) {
+
+selectedCorrDF <- CellFreqDF %>% 
+    filter(cellstate %in% thesecellstates) %>% 
+  droplevels %>% 
+    left_join(., CompareDF %>% select(biopsy, all_of(thesecellstates)), by = "biopsy") %>%
+    group_by(cellstate) %>%
+    mutate(
+        across(
+            .cols = all_of(thesecellstates),
+            .fns = ~cor.test(., prop, method = "pearson")$p.value
+        )
+    ) %>%
+    ungroup %>%
+    distinct(cellstate, .keep_all=T) %>%
+    arrange(cellstate, .locale = "en") %>%
+    select(cellstate, all_of(thesecellstates))
+
+selectedCorrDF
+
+})
+```
+
+```{r}
+pearsonList.out <- c(selectedCorrList, selectedCorrListSig)
+names(pearsonList.out)
+names(pearsonList.out) <- paste0(c(rep("Corr_", 3), rep("Sig_", 3)), names(pearsonList.out))
+pearsonList.out <- pearsonList.out[c(1,4,2,5,3,6)]
+names(pearsonList.out)
+pearsonList.out
+```
+
+```{r}
+writexl::write_xlsx(pearsonList.out, 
+                    "out/correlation/Th1Th17Tfh_Pearson_Correlation.xlsx", 
+                    col_names = TRUE, 
+                    format_headers = TRUE)
+```
+
+## Geometric Means
+
+```{r}
+CellFreqDF.wide <- CellFreqDF %>% 
+  pivot_wider(id_cols = c(biopsy, diagSub), names_from = cellstate, values_from = prop)
+
+CellFreqDF.wide
+```
+
+```{r}
+CellFreqDF.wide.scored <- CellFreqDF.wide %>% 
+  rowwise %>%
+  mutate(geommean.th1 = pick(all_of(corr.list$Th1)) %>% as.matrix %>% logInf %>% rowMeans(., na.rm = T) %>% exp, .before = biopsy) %>% 
+  mutate(geommean.th17 = pick(all_of(corr.list$Th17)) %>% as.matrix %>% logInf %>% rowMeans(., na.rm = T) %>% exp, .before = biopsy) %>% 
+  mutate(geommean.tfh = pick(all_of(corr.list$`PD1Hi Tfh`)) %>% as.matrix %>% logInf %>% rowMeans(., na.rm = T) %>% exp, .before = biopsy) %>% 
+  ungroup %>% 
+  left_join(., obs %>% select(biopsy, antitnf_response, severity_score, severity_score_range, participant_id, timepoint) %>% distinct(biopsy, .keep_all = T), by = "biopsy")
+
+
+CellFreqDF.wide.scored
+```
+
+```{r}
+write_csv(CellFreqDF.wide.scored, "out/correlation/Th1Th17Tfh_GeometricMeans.csv")
+```
+
+## Network
+
+```{r}
+selectedCorrListNetwork <- lapply(selectedCorrList, function(selectedCorrDF) {
+  selectedCorrNetwork <- selectedCorrDF %>% 
+    pivot_longer(-cellstate) %>% 
+    rename(from = cellstate, to = name, correlation = value) %>% 
+    filter(from != to)
+  
+  selectedCorrNetwork <- selectedCorrNetwork[!duplicated(as.data.frame(t(apply(selectedCorrNetwork[,1:2], 1, sort)))),]
+  selectedCorrNetwork
+})
+
+selectedCorrListNetwork
+```
+
+```{r}
+selectedCorrListNetworkDF <- plyr::ldply(selectedCorrListNetwork, .id = "cellstate")
+selectedCorrListNetworkDF
+```
+
+```{r}
+write_csv(selectedCorrListNetworkDF, "out/correlation/Th1Th17Tfh_Correlation_Edges.csv")
+```
+
+```{r}
+minCorrFilter <- 0.35
+minCorrShow <- 0.5
+selectedCorrGGraph <- selectedCorrListNetworkDF %>%
+  arrange(correlation) %>% 
+  filter(correlation >= minCorrFilter) %>%
+  mutate(correlation = ifelse(correlation < minCorrShow, 0.1, correlation)) %>% 
+  group_by(cellstate) %>% 
+  as_tbl_graph %>% 
+  activate("edges") %>% 
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "Th17", "PD1Hi Tfh"))) %>% 
+  ggraph(layout = 'kk', maxiter = 150) 
+
+th1shift <- -1
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "TFPI2Hi Fibro.", 0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Inflm. Mac", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th1", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Treg", th1shift+0.35, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "XCL+ NK", -0.5, 1)
+
+th17shift <- -0.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "CCL24+ Gob.", th17shift-0.35, 0.35)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "LGR5+ Epi.", th17shift-0.6, 0.25)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Venule", th17shift-0.6, 0.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "MNP", th17shift-0.8, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th17", th17shift+0, -0.2)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. Teff", th17shift-0.5, -0.1)
+
+tfhshift <- -2.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "SAA+ Epi.", -0.75, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PDPNHi Fibro.", -1.5, 0.4)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "IgG1 PC", tfhshift-0.2, 1.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "GC-like BC", tfhshift+0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Plasmablast", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. BC", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PD1Hi Tfh", tfhshift+0, 0.5)
+
+selectedCorrNodes <- selectedCorrGGraph$data %>% 
+  select(name, x, y) %>% 
+  rename(cellstate = name)
+
+selectedCorrNodes
+```
+
+```{r}
+write_csv(selectedCorrNodes, "out/correlation/Th1Th17Tfh_Correlation_Nodes.csv")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

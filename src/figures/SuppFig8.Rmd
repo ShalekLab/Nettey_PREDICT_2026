@@ -1,0 +1,405 @@
+---
+title: "Supplemental Figure 8"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 8
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(ggpmisc)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+`%notin%` <- Negate(`%in%`)
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+## Seurat Object
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+## IHC
+
+```{r}
+metadata <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+### TLS
+
+```{r}
+tls <- readRDS("out/ihc/panimmune/tls_long.rds")
+tls
+```
+
+```{r}
+tls.df.long <- tls %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  mutate(diagSub = fct_relevel(diagSub, c("FGID", "iCD", "cCD", "UC"))) %>% 
+  filter(participant_id %in% metadata$participant_id) 
+
+tls.df.long
+```
+
+### Panel 28
+
+```{r}
+p28 <- readRDS("out/ihc/panimmune/panel28_long.rds")
+p28
+```
+
+```{r}
+p28.df.wide <- p28 %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  mutate(diagSub = fct_relevel(diagSub, c("FGID", "iCD", "cCD", "UC"))) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  mutate(across(`CD20+`:`CD3+CD8-FOXP3-`, ~as.double(.)))
+
+p28.df.wide
+
+p28.df.long <- p28.df.wide %>% 
+  pivot_longer(`CD20+`:`CD3+CD8-FOXP3-`, names_to = "marker", values_to = "density") 
+
+p28.df.long
+```
+
+# TLS-like B Cells
+
+```{r, fig.width=5, fig.height=4.5}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0"),
+  senderCol = "cellstate",
+  senderVal = c("GC-like BC"),
+  senderProp = TRUE,
+  senderRelative = "celltype",
+  receiverCol = "cellstate",
+  receiverVal = c("Prlf. BC"),
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+) %>% 
+  ggplot(aes(x = prop.sender, y = prop.receiver)) +
+  geom_point(shape = 21, aes(fill = diagSub), size = 4) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2","P")), size=6) + 
+  scale_fill_manual(values = diagSubColVec) +
+  scale_x_continuous(labels = percent, breaks = pretty_breaks()) +
+  scale_y_continuous(labels = percent, breaks = pretty_breaks()) +
+  labs(
+    x = "GC-like BC Frequency\n(Relative to B Cells)", 
+    y = "Prlf. BC Frequency\n(Relative to B Cells)", 
+    fill = NULL
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "top",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.25, "cm")
+  )
+```
+
+```{r, fig.width=3.5, fig.height=4}
+PlotBoxplotsProp(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% 
+    mutate(cellstate.b = ifelse(cellstate %in% c("GC-like BC", "Prlf. BC"), "TLS-like BC", as.character(cellstate))) %>% 
+    mutate(cellstate.b = as.factor(cellstate.b)) %>% 
+    droplevels,  
+  ann.col = "cellstate.b",
+  filterCol = "cellstate.b",
+  filterVal = c("TLS-like BC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  mutate(facetName = "TLS-like B Cell") %>% 
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 5,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~facetName) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.5, size = 5) + 
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none") +
+  labs(
+    y = "GC-like BC + Prlf. BC\n(Relative to B Cells)", 
+    ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  ) + guides(size = guide_legend(nrow = 1))
+```
+
+# CXCL13
+
+```{r, fig.width=5, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% filter(cellsubtype == "Tfh" | cellstate == "FDC") %>% droplevels,
+  seurat = "seuobj",
+  features = "CXCL13",
+  relative.to = "cellsubtype",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellsubtype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  mutate(facetName = ifelse(cellsubtype == "Fibroblast", "FDC", as.character(cellsubtype))) %>% 
+  mutate(facetName = fct_relevel(facetName, c("Tfh", "FDC"))) %>% 
+  ggplot(.,
+         aes(x = diagSub, y = meanVal, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, position = position_jitterdodge(jitter.width = 1.25, seed = thisseed), size = 4, color = "black") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  facet_wrap(~facetName, scales = "fixed", ncol = 10) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label.y = c(2.7, 3.1, 3.5, 3.9),
+                     label = "p.format", vjust = 1.5, size = 5, tip.length = 0.05) +
+  # coord_cartesian(ylim = c(-0.1, 0.13)) +
+  guides(fill = "none") +
+  labs(
+    # x = NULL,
+    y = "Mean CXCL13 Expression",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 24, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=5.5, fig.height=5.5}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% 
+    mutate(cellstate.b = ifelse(cellstate %in% c("GC-like BC", "Prlf. BC"), "TLS-like BC", as.character(cellstate))) %>% 
+    mutate(cellstate.b = as.factor(cellstate.b)) %>% 
+    droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate",
+  senderVal = "FDC",
+  features.sender = "CXCL13",
+  senderProp = FALSE,
+  minSenderFreq = 10,
+  receiverCol = "cellstate.b",
+  receiverVal = c("TLS-like BC"),
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  receiverMinDenomFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  facet_dir = "v",
+  ncol = 4,
+  stripSize = 14,
+  axisXsize = 16,
+  axisYsize = 16,
+  regSize = 5,
+  groupReg = F,
+  fillReg = F,
+  exportSampleDF = T
+) %>% 
+  mutate(lineshow = ifelse(diagSub == "iCD", "hide", "show")) %>% 
+  ggplot(aes(x = senderExp, y = prop.receiver, fill = diagSub, color = diagSub)) +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")), size = 8, vstep=0.075, rsquared.conf.level = 0.9999) +
+  scale_color_manual(values = diagSubColVec) +
+  ggnewscale::new_scale_color() +
+  stat_poly_line(method = "lm", aes(color = lineshow), show.legend = FALSE) +
+  scale_color_manual(values = c("hide" = "white", show = "#3366FF")) +
+  geom_point(aes(fill = diagSub), shape = 21, size = 6, alpha = 0.75, color = "black") +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = label_percent(), breaks = c(0, 0.25, 0.5, 0.75), limits = c(0, 0.75)) +
+  guides(color = "none") +
+  labs(
+    x = "Mean CXCL13 Exp. (FDC)", 
+    y = "TLS-like B Cell Frequency\n(Relative to B cells)", 
+    size = "# Cells", 
+    fill = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 20, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "top",
+    legend.text = element_text(size = 20, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 24, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# IHC
+
+```{r}
+tls.df.long %>% 
+  mutate(tls_presence = tls > 0, .after = tls) %>% 
+  droplevels %>% 
+  select(diagSub, tls_presence) %>% 
+  table -> tls.contingency
+
+tls.contingency
+```
+
+```{r}
+chisq.test(tls.contingency)
+```
+
+```{r, fig.width=3.5, fig.height=3}
+tls.df.long %>% 
+  mutate(tls_presence = tls > 0, .after = tls) %>% 
+  group_by(diagSub) %>% 
+  mutate(tls_numerator = sum(tls_presence), .after = tls_presence) %>% 
+  mutate(tls_denominator = n(), .after = tls_numerator) %>% 
+  mutate(tls_fraction = paste(tls_numerator, tls_denominator, sep = "/")) %>% 
+  mutate(tls_group = tls_numerator/tls_denominator, .after = tls_denominator) %>% 
+  distinct(diagSub, .keep_all = T) %>% 
+  ungroup %>% 
+  mutate(facetName = "Tissue Sections w/ TLS") %>% 
+  ggplot(aes(x = diagSub, y = tls_group)) + 
+  geom_col(aes(fill = diagSub), color = "black") +
+  geom_text(aes(label = tls_fraction), nudge_y = 0.05, size = 4.55, fontface = "bold") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  guides(fill = "none") +
+  facet_grid(~facetName) +
+  labs(
+    y = "% of Biopsies with TLS Identified",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 12, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  ) +
+  annotate("text", x = 2.5, y = 1, label = "p = 0.697", size = 5)
+```
+
+```{r, fig.width=3.5, fig.height=3}
+p28.df.long %>% 
+  filter(marker == "CD20+") %>% 
+  filter(area == "TLS") %>% 
+  filter(!is.na(density)) %>% 
+  group_by(diagSub) %>% 
+  mutate(mean = mean(density, na.rm = T)) %>% 
+  mutate(se = sd(density, na.rm = T)/sqrt(n())) %>%
+  ungroup %>% 
+  mutate(facetName = "CD20+ in TLS") %>% 
+  ggplot(aes(x = diagSub, y = density)) +
+  geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.75, dotsize=2.50, aes(fill = diagSub)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6,
+               color = "black") +
+  scale_fill_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp,
+                     label = "p.format", vjust = 1.2, size = 4.5, tip.length = 0.05) +
+  facet_wrap(~facetName) +
+  guides(fill = "none") +
+  labs(
+    y = "CD20+ Count/mm2 (TLS)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

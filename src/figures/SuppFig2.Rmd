@@ -1,0 +1,555 @@
+---
+title: "Supplemental Figure 2"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will create plots for supplemental figure 2
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(viridis)
+library(patchwork)
+
+
+thisseed <- 231103
+```
+
+## Colonic Epithelium
+
+```{r}
+seuobj.colepi <- readRDS("data/objects/annotated/predictCOL__CB_colepi_annotated_251017_v4.rds")
+seuobj.colepi
+```
+
+```{r}
+markers.colepi <- c(    
+  'RARRES2', 'LEFTY1',
+  'CA1', 'CEACAM7', 'CCL23', 'BEST4', 
+  'SPINK4', 'ZG16', 'CCL24', 'REG3A', 'REG4',
+  'LGR5', 'PI3', 'SAA1', 'SAA2',
+  'PLCG2', 'LRMP', 'NREP', 
+  'NEUROG3', 'PYY', 'GCG', 'TPH1',
+  'MKI67'
+  )
+```
+
+```{r, fig.width=11, fig.height=15}
+accuracy.colepi <- seuobj.colepi@meta.data %>% 
+  count(cellstate) %>% 
+  mutate(accuracy = ifelse(n > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+(
+  ggplot(seuobj.colepi@meta.data %>% 
+           group_by(cellstate) %>% 
+           mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+           ungroup %>% 
+           arrange(cellstate) %>% 
+           distinct(cellstate, n, diversity, celltype), aes(x = cellstate, y = n)) + 
+    geom_col(aes(fill = diversity, color = diversity)) +
+    geom_text(aes(label = label_number(accuracy = accuracy.colepi, scale_cut = cut_short_scale())(n)), 
+              nudge_y = 1000, fontface="bold", size = 5) + 
+    facet_grid(~celltype, space = "free", scales = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity", labels = NULL) +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    scale_color_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    guides(color = "none", fill = guide_colorbar(barheight = 15)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 16),
+      legend.title = element_text(face = "bold", size = 18),
+      plot.title = element_text(size = 24, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")  
+    ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex",
+         title = sprintf("Colonic Epithelial Cells (n = %s)", label_comma()(ncol(seuobj.colepi))))
+) / 
+  
+  (
+    DotPlot(
+      seuobj.colepi, 
+      features =  markers.colepi, 
+      group.by = "cellstate", 
+      scale=F) + 
+      # scale_y_discrete(limits = rev) +
+      scale_x_discrete(limits = rev) +
+      scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+      scale_color_gradient(low = "gray80", high = "red") +
+      # scale_colour_viridis_c() +
+      RotatedAxis() +
+      labs(x = "", y = "") +
+      theme(
+        panel.grid = element_line(color = "gray80"),
+        axis.text = element_text(face = "bold", size = 24),
+        legend.title = element_text(face = "bold", size = 18),
+        legend.text = element_text(face = "bold", size = 16),
+      ) +
+      guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+      coord_flip()
+  ) + 
+  plot_layout(heights = c(5, 9))
+```
+
+## Stromal and Endothelial Cells
+
+```{r}
+seuobj.stroma <- readRDS("data/objects/annotated/predictCOL__CB_stroma_annotated_251017_v4.rds")
+seuobj.stroma
+```
+
+```{r}
+markers.stroma <- c(    
+  'PECAM1', 
+  'RGS5', 
+  'CD36',
+  'IL33', 'MADCAM1', 
+  'LYVE1',
+  'NOTCH3', 'PDGFRB',
+  'PLN',
+  'LOXL2', 'ANGPT2', 
+  'SPARC',
+  'COL3A1', 'COL4A1',
+  'COL1A1', 'COL6A3',
+  'COL8A1', 'COL9A3',
+  'S100B', 
+  'ABCA8', 'CCL8',
+  'VSTM2A',
+  'CCL19', 'CCL21', 'CXCL13',
+  'MYH11', 'TAGLN', 
+  "THY1", 
+  'TFPI2', 'CCL13', 'CXCL10',
+  'PDPN', 'AGT', 
+  'MMP1', 'MMP3',
+  'MKI67'
+  )
+```
+      
+```{r, fig.width=11, fig.height=19.5}
+accuracy.stroma <- seuobj.stroma@meta.data %>% 
+  dplyr::count(cellstate) %>% 
+  mutate(accuracy = ifelse(n > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+(
+  ggplot(seuobj.stroma@meta.data %>% 
+           group_by(cellstate) %>% 
+           mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+           ungroup %>% 
+           arrange(cellstate) %>% 
+           distinct(cellstate, celltype, n, diversity), aes(x = cellstate, y = n)) + 
+    geom_col(aes(fill = diversity, color = diversity)) +
+    geom_text(aes(label = label_number(accuracy = accuracy.stroma, scale_cut = cut_short_scale())(n)), 
+              nudge_y = 1000, fontface="bold", size = 5) + 
+    facet_grid(~celltype, space = "free", scales = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity", labels = NULL) +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    scale_color_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    guides(color = "none", fill = guide_colorbar(barheight = 15)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 16),
+      legend.title = element_text(face = "bold", size = 18),
+      plot.title = element_text(size = 28, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")  
+    ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex",
+         title = sprintf("Stromal and Endothelial Cells (n = %s)", label_comma()(ncol(seuobj.stroma))))
+)/ 
+  
+  (
+    DotPlot(
+      seuobj.stroma, 
+      features =  markers.stroma, 
+      group.by = "cellstate", 
+      scale=F) + 
+      # scale_y_discrete(limits = rev) +
+      scale_x_discrete(limits = rev) +
+      scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+      scale_color_gradient2(midpoint = 1, low = "gray40", mid = "gray80", high = "red") +
+      # scale_colour_viridis_c() +
+      RotatedAxis() +
+      labs(x = "", y = "") +
+      theme(
+        panel.grid = element_line(color = "gray80"),
+        axis.text = element_text(face = "bold", size = 24),
+        legend.title = element_text(face = "bold", size = 18),
+        legend.text = element_text(face = "bold", size = 16),
+      ) +
+      guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+      coord_flip()
+  ) + 
+  plot_layout(heights = c(5, 11.5))
+```
+
+## Myeloid
+
+```{r}
+seuobj.myeloid <- readRDS("data/objects/annotated/predictCOL__CB_myeloid_annotated_251017_v4.rds")
+seuobj.myeloid
+```
+
+```{r}
+markers.myeloid <- c(  
+  'LYZ', 
+  'CD209', 'RNASE1', 'F13A1',
+  'CD1C', 'FCER1A', 'CLEC10A',
+  'C1QA',
+  'IL1B', 'IL18', 'MMP9', 
+  'TNF', 
+  'GBP1', 'CXCL9', 'CXCL10',
+  'CCL3', 'CCL4', 'CXCL1',
+  'CXCL2', 'CXCL3', 
+  'S100A8', 'S100A9', 
+  'CLEC9A', 'XCR1',
+  'LAMP3', 'CCR7', 'CCL19', 
+  'AIRE', 
+  'GZMB', 'LILRA4',
+  'AQP9', 'TPSAB1',
+  'MKI67'
+  )
+```
+
+```{r, fig.width=8.5, fig.height=17}
+accuracy.myeloid <- seuobj.myeloid@meta.data %>% 
+  count(cellstate) %>% 
+  mutate(accuracy = ifelse(n > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+(
+  ggplot(seuobj.myeloid@meta.data %>% 
+           group_by(cellstate) %>% 
+           mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+           ungroup %>% 
+           arrange(cellstate) %>% 
+           distinct(cellstate, n, diversity, celltype), aes(x = cellstate, y = n)) + 
+    geom_col(aes(fill = diversity, color = diversity)) +
+    geom_text(aes(label = label_number(accuracy = accuracy.myeloid, scale_cut = cut_short_scale())(n)), 
+              nudge_y = 300, fontface="bold", size = 5) + 
+    facet_grid(~celltype, space = "free", scales = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity", labels = NULL) +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    scale_color_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    guides(color = "none", fill = guide_colorbar(barheight = 15)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 16),
+      legend.title = element_text(face = "bold", size = 18),
+      plot.title = element_text(size = 24, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")  
+    ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex",
+         title = sprintf("Myeloid Cells (n = %s)", label_comma()(ncol(seuobj.myeloid))))
+) / 
+  
+  (
+    DotPlot(
+      seuobj.myeloid, 
+      features =  markers.myeloid, 
+      group.by = "cellstate", 
+      scale=F) + 
+      # scale_y_discrete(limits = rev) +
+      scale_x_discrete(limits = rev) +
+      scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+      scale_color_gradient(low = "gray80", high = "red") +
+      # scale_colour_viridis_c() +
+      RotatedAxis() +
+      labs(x = "", y = "") +
+      theme(
+        panel.grid = element_line(color = "gray80"),
+        axis.text = element_text(face = "bold", size = 24),
+        legend.title = element_text(face = "bold", size = 18),
+        legend.text = element_text(face = "bold", size = 16),
+      ) +
+      guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+      coord_flip()
+  ) + 
+  plot_layout(heights = c(5.5, 13))
+```
+
+# Plasma
+
+```{r plasma_read}
+seuobj.plasma <- readRDS("data/objects/annotated/predictCOL__CB_plasma_annotated_251017_v4.rds")
+seuobj.plasma
+```
+
+```{r}
+markers.plasma <- c(  
+    'IGHA1','IGHA2',
+    'IGHG1','IGHG2','IGHG3','IGHG4',
+    'IGHM', 'IGHD','IGHE',
+    'MKI67'
+  )
+```
+
+```{r, fig.width=9.5, fig.height=11.25}
+accuracy.plasma <- seuobj.plasma@meta.data %>% 
+  count(cellstate) %>% 
+  mutate(accuracy = ifelse(n > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+(
+  ggplot(seuobj.plasma@meta.data %>% 
+           group_by(cellstate) %>% 
+           mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+           ungroup %>% 
+           arrange(cellstate) %>% 
+           distinct(cellstate, n, diversity, celltype), aes(x = cellstate, y = n)) + 
+    geom_col(aes(fill = diversity, color = diversity)) +
+    geom_text(aes(label = label_number(accuracy = accuracy.plasma, scale_cut = cut_short_scale())(n)), 
+              nudge_y = 2500, fontface="bold", size = 5) + 
+    facet_grid(~celltype, space = "free", scales = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity", labels = NULL) +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    scale_color_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    guides(color = "none", fill = guide_colorbar(barheight = 12.5)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 14),
+      legend.title = element_text(face = "bold", size = 16),
+      plot.title = element_text(size = 24, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")  
+    ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex",
+         title = sprintf("Plasma Cells (n = %s)", label_comma()(ncol(seuobj.plasma))))
+) / 
+  
+  (
+    DotPlot(
+      seuobj.plasma, 
+      features =  markers.plasma, 
+      group.by = "cellstate", 
+      scale=F) + 
+      # scale_y_discrete(limits = rev) +
+      scale_x_discrete(limits = rev) +
+      scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient2(low = "gray40", mid = "gray80", midpoint = 2, high = "red") +
+      # scale_colour_viridis_c() +
+      RotatedAxis() +
+      labs(x = "", y = "") +
+      theme(
+        panel.grid = element_line(color = "gray80"),
+        axis.text = element_text(face = "bold", size = 24),
+        legend.title = element_text(face = "bold", size = 16),
+        legend.text = element_text(face = "bold", size = 16),
+      ) +
+      guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+      coord_flip()
+  ) + 
+  plot_layout(heights = c(5, 7))
+```
+
+
+# B Cells
+
+```{r bcell_read}
+seuobj.bcell <- readRDS("data/objects/annotated/predictCOL__CB_bcell_annotated_251017_v4.rds")
+seuobj.bcell
+```
+
+```{r}
+markers.bcell <- c(    
+    'IGHD', 'IGHM',
+    'GPR183', 'CD27',
+    'TNFRSF13B', 'FCRL5', 'ENTPD1', 
+    'BCL6', 'AICDA', 'MME', 
+    'MZB1', 
+    'MKI67'
+  )
+```
+
+```{r, fig.width=7, fig.height=11.25}
+accuracy.bcell <- seuobj.bcell@meta.data %>% 
+  dplyr::count(cellstate) %>% 
+  mutate(accuracy = ifelse(n > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+(
+  ggplot(seuobj.bcell@meta.data %>% 
+           group_by(cellstate) %>% 
+           mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+           ungroup %>% 
+           arrange(cellstate) %>% 
+           distinct(cellstate, celltype, n, diversity), aes(x = cellstate, y = n)) + 
+    geom_col(aes(fill = diversity)) +
+    geom_text(aes(label = label_number(accuracy = accuracy.bcell, scale_cut = cut_short_scale())(n)), 
+              nudge_y = 1500, fontface="bold", size = 5) + 
+    facet_grid(~celltype, scales = "free", space = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity", labels = NULL) +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = c(0.5, 0.75, 1)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 12),
+      legend.title = element_text(face = "bold", size = 12),
+      plot.title = element_text(size = 24, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")  
+    ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex",
+         title = sprintf("B Cells (n = %s)", label_comma()(ncol(seuobj.bcell))))
+) / 
+  
+  (
+    DotPlot(
+      seuobj.bcell, 
+      features =  markers.bcell, 
+      group.by = "cellstate", 
+      scale=F) + 
+      # scale_y_discrete(limits = rev) +
+      scale_x_discrete(limits = rev) +
+      scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+      scale_color_gradient(low = "gray80", high = "red") +
+      # scale_colour_viridis_c() +
+      RotatedAxis() +
+      labs(x = "", y = "") +
+      theme(
+        panel.grid = element_line(color = "gray80"),
+        axis.text = element_text(face = "bold", size = 24),
+        legend.title = element_text(face = "bold", size = 16),
+        legend.text = element_text(face = "bold", size = 16),
+      ) +
+      guides(color = guide_colorbar(title = "LogExp"), size = guide_legend(title = "% Exp")) + 
+      coord_flip()
+  ) + 
+  plot_layout(heights = c(5, 7))
+```
+
+## T Cells, NK Cells, ILCs
+
+```{r tnkilc_read}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+```{r}
+markers.tnkilc <- c(    
+    'CD3D', 'CD4', 'CD8A', 'CD8B', 
+    'KLF2', 'ANXA1',
+    'RORA', 'RORC',
+    'CXCR3', 'CCR6', 'CCR4',
+    'IL12RB2', 'IFNG', 'TNF',
+    'IL17A', 'IL17F', 'IL21', 'IL22', 'IL26',
+    'PASK','IL6R', 'PDCD1', 'CXCL13', 'CXCR5',
+    'LEF1', 'FOXP3', 'PRDM1', 'LAG3',
+    'GZMA', 'GZMK',
+    'ZNF683', 'TRDV1', 'HOPX', 
+    'ITGAE', 'KIR2DL4', 'GZMB',
+    'TRAV1-2', 'TRDV2', 'TRGV9',
+    'ENTPD1',
+    'NKG7', 'PRF1', 'GNLY',
+    'FCGR3A', 'XCL1', 
+    'KIT', 'SOX4',
+    'MKI67'
+)
+```
+
+```{r, fig.width=16.5, fig.height=21}
+accuracy.tnkilc <- seuobj.tnkilc@meta.data %>% 
+  dplyr::count(cellstate) %>% 
+  mutate(accuracy = ifelse(n > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+(
+  ggplot(seuobj.tnkilc@meta.data %>% 
+           group_by(cellstate) %>% 
+           mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+           ungroup %>% 
+           arrange(cellstate) %>% 
+           distinct(cellstate, celltype, n, diversity), aes(x = cellstate, y = n)) + 
+    geom_col(aes(fill = diversity, color = diversity)) +
+    geom_text(aes(label = label_number(accuracy = accuracy.tnkilc, scale_cut = cut_short_scale())(n)), 
+              nudge_y = 750, fontface="bold", size=4.5) + 
+    facet_grid(~celltype, space = "free", scales = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity", labels = NULL) +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    scale_color_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    guides(color = "none", fill = guide_colorbar(barheight = 23)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 18),
+      legend.title = element_text(face = "bold", size = 20),
+      plot.title = element_text(size = 28, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")    
+      ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex",
+         title = sprintf("T Cells, Natural Killer Cells, and Innate Lymphoid Cells (n = %s)", label_comma()(ncol(seuobj.tnkilc))))
+) / 
+  
+  (
+    DotPlot(
+      seuobj.tnkilc, 
+      features =  markers.tnkilc, 
+      group.by = "cellstate", 
+      scale=F) + 
+      # scale_y_discrete(limits = rev) +
+      scale_x_discrete(limits = rev) +
+      scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+      scale_color_gradient(low = "gray80", high = "red") +
+      # scale_colour_viridis_c() +
+      RotatedAxis() +
+      labs(x = "", y = "") +
+      theme(
+        panel.grid = element_line(color = "gray80"),
+        axis.text = element_text(face = "bold", size = 24),
+        legend.title = element_text(face = "bold", size = 20),
+        legend.text = element_text(face = "bold", size = 18)
+      ) +
+      guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+      coord_flip()
+) + 
+  plot_layout(heights = c(4, 14))
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

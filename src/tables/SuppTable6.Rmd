@@ -1,0 +1,209 @@
+---
+title: "Supplemental Table 6 - T Cell Correlation and Cell-Cell Interaction"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile T cell correlation data, including pearson correlations+significance, geometric mean of affiliated cell states, nodes/edges in correlation networks, and cell-cell interaction analysis performed through NicheNet into a single Excel file.
+
+# Setup
+
+
+```{r setup}
+library(tidyverse)
+library(writexl)
+library(openxlsx)
+library(multinichenetr)
+
+thisseed <- 231103
+
+# https://stackoverflow.com/questions/29479391/import-multiple-excel-sheets-using-openxlsx
+read_all_sheets = function(xlsxFile, ...) {
+  sheet_names = getSheetNames(xlsxFile)
+  sheet_list = as.list(rep(NA, length(sheet_names)))
+  names(sheet_list) = sheet_names
+  for (sn in sheet_names) {
+    sheet_list[[sn]] = openxlsx::read.xlsx(xlsxFile, sheet=sn, ...)
+  }
+  return(sheet_list)
+}
+```
+
+# Prepare Data
+
+## Cell State Frequencies
+
+```{r}
+CellFreqDF.wide.scored <- read_csv("out/correlation/Th1Th17Tfh_GeometricMeans.csv")
+CellFreqDF.wide.scored
+```
+
+```{r}
+freqs.out <- CellFreqDF.wide.scored %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, TAC:ILC) %>% 
+  arrange(biopsy)
+  
+freqs.out
+```
+
+```{r}
+geommean.out <- CellFreqDF.wide.scored %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, starts_with("geommean")) %>% 
+  rename(Th1_GeomMean = geommean.th1, 
+         Th17_GeomMean = geommean.th17, 
+         `PD1Hi Tfh_GeomMean` = geommean.tfh) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+  
+geommean.out
+```
+
+## Network
+
+```{r}
+correlation.list.wide <- read_all_sheets("out/correlation/Th1Th17Tfh_Pearson_Correlation.xlsx")
+correlation.list.wide
+```
+
+```{r}
+network.nodes <- read_csv("out/correlation/Th1Th17Tfh_Correlation_Nodes.csv")
+network.nodes
+```
+
+```{r}
+network.edges <- read_csv("out/correlation/Th1Th17Tfh_Correlation_Edges.csv")
+network.edges
+```
+
+# Combine Lists
+
+```{r}
+correlation.out <- list(
+  "Key" = data.frame(),
+  "CellState_Frequencies" = freqs.out,
+  "Geometric_Means" = geommean.out,
+  "Network_Edges" = network.edges,
+  "Network_Nodes" = network.nodes
+  ) %>% 
+  append(correlation.list.wide)
+  
+correlation.out
+```
+
+
+```{r}
+diffexp.out <- list("Key" = data.frame(), 
+                    "DE__UCvscCD_Thelper" = de.ccduc.thelper.df,
+                    "DE__UCvscCD_IBDAssoc" = de.ccduc.ibdassoc.df,
+                    "GSEA__UCvscCD_IBDAssoc" = gsea.ccduc.ibdassoc.df,
+                    "DE__cCD_aTNFvsNOA" = de.ccdnoa.celltypes.df,
+                    "DE__cCD_PRvsFR" = de.ccdfrpr.celltypes.df,
+                    "DE__cCD_PostvsPre" = de.ccdprepost.cellatnftypes.df,
+                    "GSEA__cCD_PostvsPre" = gsea.ccdprepost.atnfcelltypes.df,
+                    "DE__UC_aTNFvsNOA" = de.ucnoa.celltypes.df,
+                    "GSEA__UC_aTNFvsNOA" = gsea.ucnoa.celltypes.df,
+                    "DE__UC_NRvsPR" = de.ucprnr.celltypes.df,
+                    "GSEA__UC_NRvsPR" = gsea.ucprnr.celltypes.df,
+                    "DE__UC_NRvsPR_IBDAssoc" = de.ucprnr.ibdassoc.df
+)
+```
+
+# NicheNet
+
+```{r}
+multinichenet_output <- readRDS("data/nichenet/analysis/multinichenetoutput__ccduc_t0_thtfh_praw.rds")
+multinichenet_output %>% names
+```
+
+```{r}
+prioritization_tables <- multinichenet_output$prioritization_tables
+prioritization_tables
+```
+
+```{r}
+prioritization_tables.thtfh <- prioritization_tables
+
+prioritization_tables.thtfh$group_prioritization_tbl <- prioritization_tables.thtfh$group_prioritization_tbl %>% filter(sender %in% c("Thelper", "Tfh"))
+prioritization_tables.thtfh$sample_prioritization_tbl <- prioritization_tables.thtfh$sample_prioritization_tbl %>% filter(sender %in% c("Thelper", "Tfh"))
+prioritization_tables.thtfh$group_prioritization_table_source <- prioritization_tables.thtfh$group_prioritization_table_source %>% filter(sender %in% c("Thelper", "Tfh"))
+
+prioritization_tables.thtfh
+```
+
+```{r}
+top_lr_overall.sender.thtfh <- get_top_n_lr_pairs(
+  prioritization_tables.thtfh, 
+  top_n = 120, 
+  senders_oi = c("Thelper", "Tfh"),
+  rank_per_group = FALSE
+  )
+
+top_lr_overall.sender.thtfh
+```
+
+
+```{r}
+top_lr_overall_prioritized.sender.thtfh <- prioritization_tables.thtfh$group_prioritization_tbl %>%
+  filter(id %in% top_lr_overall.sender.thtfh$id) %>%
+  distinct(id, sender, receiver, ligand, receptor, group) %>% 
+  left_join(top_lr_overall.sender.thtfh)
+top_lr_overall_prioritized.sender.thtfh$prioritization_score[is.na(top_lr_overall_prioritized.sender.thtfh$prioritization_score)] = 0
+
+top_lr_overall_prioritized.sender.thtfh
+```
+
+```{r}
+prioritization_tables.thtfh$ligand_activities_target_de_tbl <- prioritization_tables.thtfh$ligand_activities_target_de_tbl %>% filter(ligand %in% top_lr_overall_prioritized.sender.thtfh$ligand)
+
+prioritization_tables.thtfh
+```
+
+```{r}
+# write_xlsx trims names to 31 characters anyway
+names(prioritization_tables.thtfh) <- c(
+  "group_priority",
+  "sample_priority",
+  "ligand_activities",
+  "group_priority_source"
+)
+
+names(prioritization_tables.thtfh)
+```
+
+
+# Combine Lists
+
+```{r}
+nichenet.out <- prioritization_tables.thtfh
+  
+
+nichenet.out
+```
+
+# Combine All
+
+```{r}
+joint.out <- c(
+  correlation.out,
+  nichenet.out
+)
+
+joint.out
+```
+
+
+```{r}
+write_xlsx(joint.out, 
+           path = "out/tables/Supplemental Table 6 - T Cell Correlation and Cell-Cell Interaction.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

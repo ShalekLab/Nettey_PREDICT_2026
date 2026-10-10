@@ -1,0 +1,737 @@
+---
+title: "Supplemental Table 4 - Cell Frequency and Differential Abundance"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile Milo and cell frequency data into a single Excel file
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(scales)
+library(ggpubr)
+library(ggbreak)
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+
+celltypes.renamed <- c(
+  "Colonic Epithelium" = "ColEpi", 
+  "Stroma" = "Stroma", 
+  "Myeloid" = "Myeloid", 
+  "Plasma Cells" = "Plasma", 
+  "B Cells" = "BCell", 
+  "T Cells, NK Cells, and ILCs" = "TNKILC")
+
+thisseed <- 231103
+
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+
+source("../functions/ComparisonPlottingFxns.R")
+
+selectedparticipants.hla <- c("001-036", "001-038")
+
+`%notin%` <- Negate(`%in%`)
+```
+
+# Read Data
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+
+# Neighbourhoods
+
+```{r}
+nhoods.colepi <- read_tsv("out/milo/colepi/231226__predictCOL__CB_colepi_T0_FGIDCCDUC_ds_milo_k200_10x_nhoods_dense.txt")
+nhoods.colepi
+```
+
+```{r}
+nhoods.stroma <- read_tsv("out/milo/stroma/231226__predictCOL__CB_stroma_T0_FGIDCCDUC_ds_milo_k200_10x_nhoods_dense.txt")
+nhoods.stroma
+```
+
+```{r}
+nhoods.myeloid <- read_tsv("out/milo/myeloid/231226__predictCOL__CB_myeloid_T0_FGIDCCDUC_ds_milo_k200_10x_nhoods_dense.txt")
+nhoods.myeloid
+```
+
+```{r}
+nhoods.plasma <- read_tsv("out/milo/plasma/231226__predictCOL__CB_plasma_T0_FGIDCCDUC_ds_milo_k200_10x_nhoods_dense.txt")
+nhoods.plasma
+```
+
+```{r}
+nhoods.bcell <- read_tsv("out/milo/bcell/231226__predictCOL__CB_bcell_T0_FGIDCCDUC_ds_milo_k200_10x_nhoods_dense.txt")
+nhoods.bcell
+```
+
+```{r}
+nhoods.tnkilc <- read_tsv("out/milo/tnkilc/231226__predictCOL__CB_tnkilc_T0_FGIDCCDUC_ds_milo_k200_10x_nhoods_dense.txt")
+nhoods.tnkilc
+```
+
+```{r}
+nhoods.list <- list(
+  "Nhoods_ColEpi" = nhoods.colepi,
+  "Nhoods_Stroma" = nhoods.stroma,
+  "Nhoods_Myeloid" = nhoods.myeloid,
+  "Nhoods_Plasma" = nhoods.plasma,
+  "Nhoods_BCell" = nhoods.bcell,
+  "Nhoods_TNKILC" = nhoods.tnkilc
+)
+nhoods.list
+```
+
+
+# Differential Abundance
+
+```{r}
+da_results.fgidibd.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_fgidibd.rds") %>% 
+  select(-Nhood) %>% 
+  rename(Nhood = Nhood.stash) %>% 
+  mutate(celltype = celltypes.renamed[celltype]) %>% 
+  mutate(comparison = "IBD vs. FGID", .before = celltype)
+
+da_results.fgidibd.df
+```
+
+```{r}
+da_results.fgidccd.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_fgidccd.rds") %>% 
+  select(-Nhood) %>% 
+  rename(Nhood = Nhood.stash) %>% 
+  mutate(celltype = celltypes.renamed[celltype]) %>% 
+  mutate(comparison = "cCD vs. FGID", .before = celltype)
+
+da_results.fgidccd.df
+```
+
+```{r}
+da_results.fgiduc.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_fgiduc.rds") %>% 
+  select(-Nhood) %>% 
+  rename(Nhood = Nhood.stash) %>% 
+  mutate(celltype = celltypes.renamed[celltype]) %>% 
+  mutate(comparison = "UC vs. FGID", .before = celltype)
+
+da_results.fgiduc.df
+```
+
+```{r}
+da_results.ccduc.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_ccduc.rds") %>% 
+  select(-Nhood) %>% 
+  rename(Nhood = Nhood.stash) %>% 
+  mutate(celltype = celltypes.renamed[celltype]) %>% 
+  mutate(comparison = "UC vs. cCD", .before = celltype)
+
+da_results.ccduc.df
+```
+
+# Combine Lists
+
+```{r}
+milo.out <- list(
+  "Key" = data.frame(),
+  "IBDvsFGID" = da_results.fgidibd.df,
+  "cCDvsFGID" = da_results.fgidccd.df,
+  "UCvsFGID" = da_results.fgiduc.df,
+  "UCvscCD" = da_results.ccduc.df
+  ) %>% 
+  append(
+    c(
+      nhoods.list
+    )
+  )
+
+
+milo.out
+```
+
+# Check biopsy numbers
+
+Run below to get per-celltype and per-diagnosis biopsy numbers.
+
+```{r}
+biopsies.list <- lapply(nhoods.list, function(x) x %>% select(-nhood) %>% colnames)
+biopsies.list
+```
+
+```{r}
+metadata <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+```{r}
+metadata.list <- lapply(biopsies.list, function(x) metadata %>% distinct(biopsy, diagSub) %>% filter(biopsy %in% x))
+metadata.list
+```
+
+```{r}
+biopsy.count <- lapply(metadata.list, function(x) x %>% count(diagSub))
+biopsy.count
+```
+
+## Panel 20
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+```
+
+```{r}
+p20.df.wide <- p20 %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  filter(str_ends(colon_site_ihc, "-2", negate = T))
+
+p20.df.wide
+
+p20.df.long <- p20.df.wide %>% 
+  pivot_longer(`BCMA+`:`NCR1+`, names_to = "marker", values_to = "density") 
+
+p20.df.long
+```
+
+```{r}
+p20.df.out <- p20.df.long %>% 
+  select(sample_id, colon_site_ihc, diagSub, antitnf_response, 
+         marker, area, density) %>% 
+  mutate(marker = fct_relevel(marker, 
+                              c("BCMA+", "ECP+", "CD11c+", "MPO+", "NCR1+"))) %>% 
+  rename(partition = area, colon_site = colon_site_ihc) %>% 
+  arrange(marker, partition, diagSub, antitnf_response, sample_id) 
+
+p20.df.out
+```
+
+## Panel 28
+
+```{r}
+p28 <- readRDS("out/ihc/panimmune/panel28_long.rds")
+p28
+```
+
+```{r}
+p28.df.wide <- p28 %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  mutate(diagSub = fct_relevel(diagSub, c("FGID", "iCD", "cCD", "UC"))) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  mutate(across(`CD20+`:`CD3+CD8-FOXP3-`, ~as.double(.)))
+
+p28.df.wide
+
+p28.df.long <- p28.df.wide %>% 
+  pivot_longer(`CD20+`:`CD3+CD8-FOXP3-`, names_to = "marker", values_to = "density") 
+
+p28.df.long
+```
+
+```{r}
+p28.df.out <- p28.df.long %>% 
+  select(sample_id, colon_site_ihc, diagSub, antitnf_response, 
+         marker, area, density) %>% 
+  mutate(marker = fct_relevel(marker, 
+                              c("CD20+", "CD3+", "CD3+CD8+FOXP3-", "CD68+", "CD3+CD8-FOXP3+", "CD3+CD8-", "CD3+CD8-FOXP3-"))) %>% 
+  rename(partition = area, colon_site = colon_site_ihc) %>% 
+  arrange(marker, partition, diagSub, antitnf_response, sample_id) 
+
+p28.df.out
+```
+
+```{r}
+rbind(
+  p20.df.wide %>% distinct(participant_id, diagSub),
+  p28.df.wide %>% distinct(participant_id, diagSub)
+) %>% 
+  distinct(participant_id, diagSub) %>% 
+  pull(diagSub) %>% 
+  table
+```
+
+
+```{r}
+p20.df.wide %>% distinct(participant_id, .keep_all = T) %>% pull(diagSub) %>% table
+p28.df.wide %>% distinct(participant_id, .keep_all = T) %>% pull(diagSub) %>% table
+```
+
+```{r}
+p20.df.wide %>% filter(area == "WS") %>% distinct(sample_id, .keep_all = T) %>% pull(diagSub) %>% table
+p28.df.wide %>% filter(area == "WS") %>% distinct(sample_id, .keep_all = T) %>% pull(diagSub) %>% table
+```
+
+## TLS
+
+
+```{r}
+tls <- readRDS("out/ihc/panimmune/tls_long.rds")
+tls
+```
+
+```{r}
+tls.df.long <- tls %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  mutate(diagSub = fct_relevel(diagSub, c("FGID", "iCD", "cCD", "UC"))) %>% 
+  filter(participant_id %in% metadata$participant_id) 
+
+tls.df.long
+```
+
+```{r}
+p28.df.out %>% colnames
+```
+
+
+```{r}
+tls.out <- tls.df.long %>% 
+  select(sample_id, colon_site_ihc, diagSub, antitnf_response,
+         tls, tls_area, lp_area, epi_area, section_area) %>% 
+  rename(colon_site = colon_site_ihc,
+         Number_TLS = tls,
+         TLS_Area = tls_area,
+         LP_Area = lp_area,
+         EPI_Area = epi_area,
+         WholeSection_Area = section_area) %>% 
+  arrange(diagSub, antitnf_response, sample_id)
+  
+tls.out
+```
+
+# scRNA-Seq Frequencies
+
+## ColEpi
+
+```{r}
+freq.colepi <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Colonocyte", "Inflm. Col.", "Goblet", "Inflm. Gob.", "CCL24+ Gob.", "LGR5+ Epi.", "SAA+ Epi."),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.colepi
+```
+
+## Stroma
+
+```{r}
+freq.stroma <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Venule", "Cntrct. Peri.", "Remod. Peri.", "ABCA8+ Fibro.", "VSTM2A+ Fibro.", "Myofibro.", "TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.stroma
+```
+
+## Myeloid
+
+```{r}
+freq.myeloid <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Inflm. Mac", "MNP", "cDC", "LAMP3+ DC", "pDC", "Neutrophil"),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.myeloid
+```
+
+## Plasma
+
+```{r}
+freq.plasma <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("IgA1 PC", "IgA2 PC", "IgG1 PC", "IgG2 PC", "IgG3 PC", "IgG4 PC", "IgM PC"),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.plasma
+```
+
+## BCell
+
+```{r}
+freq.bcell.cellstates <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Atyp. MBC", "GC-like BC", "Prlf. BC", "Plasmablast"),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.bcell.cellstates
+```
+
+```{r}
+freq.bcell.tls <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% 
+    mutate(cellstate.b = ifelse(cellstate %in% c("GC-like BC", "Prlf. BC"), "TLS-like BC", as.character(cellstate))) %>% 
+    mutate(cellstate.b = as.factor(cellstate.b)) %>% 
+    droplevels,
+  ann.col = "cellstate.b",
+  filterCol = "cellstate.b",
+  filterVal = c("TLS-like BC"),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate.b,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.bcell.tls
+```
+
+```{r}
+freq.bcell <- rbind(
+  freq.bcell.cellstates,
+  freq.bcell.tls
+)
+
+freq.bcell
+```
+
+## TNKILC
+
+```{r}
+freq.tnkilc <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17", "Treg", "PD1Hi Tfh", "IEL", "Prlf. IEL"),
+  relative.to = "celltype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.tnkilc
+```
+
+## Pre vs. Post
+
+```{r}
+freq.prepost <- PlotBoxplotsProp(
+  obs %>% 
+    mutate(atnf = paste(diagSub, antitnf, sep = ".")) %>%
+    mutate(ibd.atnf = case_when(
+      diagSub == "FGID" ~ "FGID",
+      diagSub == "iCD" ~ "iCD",
+      diagSub == "cCD" & timepoint != "T0" & antitnf_response %in% c("FR", "PR", "NR") ~ "PostTx cCD",
+      diagSub == "cCD" & timepoint != "T0" & antitnf_response %notin% c("FR", "PR", "NR") ~ "Other.cCD",
+      diagSub == "cCD" & timepoint == "T0" ~ "PreTx cCD",
+      diagSub == "UC" ~ "UC",
+    )) %>%
+    mutate(ibd.atnf = fct_relevel(ibd.atnf, c("FGID", "iCD", "Other.cCD", "PreTx cCD", "PostTx cCD", "UC"))) %>%
+    filter(diagSub != "UC") %>% 
+    filter(!(diagSub == "iCD" & timepoint == "R")) %>% 
+    filter(ibd.atnf != "Other.cCD" & timepoint != "R2") %>% 
+    filter(!(diagSub == "cCD" & antitnf_response %notin% c("FR", "PR", "NR"))) %>% 
+    droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "TFPI2Hi Fibro.", "Inflm. Mac", "Treg", "XCL+ NK", "MNP", "Th17"),
+  relative.to = "celltype",
+  xVar = "ibd.atnf",
+  fillVar = "antitnf_response",
+  fillVector = ibdAtnfColVec,
+  testComp = ibdonlyAtnf.comp,
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  mutate(antitnf_response = fct_relevel(antitnf_response, c("FR", "PR"))) %>% 
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "TFPI2Hi Fibro.", "Inflm. Mac", "Treg", "XCL+ NK", "MNP", "Th17")))  %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    diagSub_timepoint = ibd.atnf,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub_timepoint, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub_timepoint, antitnf_response, biopsy)
+
+freq.prepost
+```
+
+## Tfh
+
+```{r}
+freq.tfh.cst <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Tfh"),
+  relative.to = "tgroup",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellsubtype,
+    RelGroup = tgroup,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.tfh.cst
+```
+
+
+```{r}
+freq.tfh.cs <- PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Lo Tfh", "PD1Hi Tfh"),
+  relative.to = "cellsubtype",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = cellsubtype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop
+  ) %>% 
+  relocate(biopsy, diagSub, antitnf_response, 
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  arrange(Annotation, diagSub, antitnf_response, biopsy)
+
+freq.tfh.cs
+```
+
+```{r}
+freq.tfh <- rbind(
+  freq.tfh.cst,
+  freq.tfh.cs
+)
+
+freq.tfh
+```
+
+### UC HLA
+
+```{r}
+hla.out <- PlotBoxplotsProp(
+  obs %>% 
+    filter(timepoint == "T0" & diagSub == "UC") %>% 
+    droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c(
+    "SAA+ Epi.",
+    "IgA2 PC", "IgG1 PC",
+    "Th17", "PD1Hi Tfh"
+    ),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants.hla, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants.hla)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants.hla, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  rename(
+    Annotation = cellstate,
+    RelGroup = celltype,
+    Annotation_Count = annotation.freq,
+    RelGroup_Count = denominator.freq,
+    Proportion = prop,
+    `HLA-DRB1` = DRB1,
+    Num_1501_Alleles = alleleNum,
+  ) %>% 
+  relocate(biopsy, diagSub, `HLA-DRB1`, Num_1501_Alleles,
+           Annotation, RelGroup, Annotation_Count, RelGroup_Count, Proportion) %>% 
+  select(-participant_id, -partCol) %>% 
+  arrange(Annotation, `HLA-DRB1`, biopsy)
+
+hla.out
+```
+
+# Combine Lists
+
+```{r}
+freq.out <- list(
+  "Panel 20" = p20.df.out,
+  "Panel 28" = p28.df.out,
+  "TLS_Freq" = tls.out,
+  "ColEpi_Freq" = freq.colepi,
+  "Stroma_Freq" = freq.stroma,
+  "Myeloid_Freq" = freq.myeloid,
+  "Plasma_Freq" = freq.plasma,
+  "BCell_Freq" = freq.bcell,
+  "TNKILC_Freq" = freq.tnkilc,
+  "cCDPrevsPost_Freq" = freq.prepost,
+  "Tfh_Freq" = freq.tfh,
+  "UCHLA_Freq" = hla.out
+)
+  
+
+freq.out
+```
+
+# Combine All and Export
+
+```{r}
+joint.out <- c(
+  milo.out,
+  freq.out
+)
+
+joint.out
+```
+
+```{r}
+write_xlsx(joint.out, 
+           path = "out/tables/Supplemental Table 3 - Cell Frequency and Differential Abundance.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

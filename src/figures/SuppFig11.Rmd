@@ -1,0 +1,281 @@
+---
+title: "Supplemental Figure 11"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+
+In this notebook, I will make plots for Supplemental Figure 11
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggradar)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+```
+
+
+```{r}
+combined.df <- readRDS("out/summary/251017__tcellfeatures.rds")
+combined.df
+```
+
+```{r}
+combined.df.scaled <- combined.df %>% 
+  mutate_at(vars(-biopsy:-huprot), scales::rescale)
+
+combined.df.scaled
+```
+
+```{r}
+combined.df.scaled.plot <- combined.df.scaled %>% 
+  rowwise %>% 
+  mutate(`Th1\nFeatures` = mean(c(Th1, GeomMean_Th1, IFNG, STAT1, TNFa))) %>% 
+  mutate(`Th17\nFeatures` = mean(c(Th17, GeomMean_Th17, IL17A, Antimicrobial, Chemokine))) %>%
+  mutate(`PD1Hi Tfh\nFeatures` = mean(c(`PD1Hi Tfh`, `IgG1 PC`, GeomMean_Tfh, CXCL13,  mTiRP))) %>% 
+  select(-`IgG1 PC`:-`mTiRP`) %>% 
+  ungroup %>% 
+  drop_na
+
+combined.df.scaled.plot
+```
+
+```{r}
+combined.df.scaled.plot %>% count(diagSub, timepoint, antitnf_response)
+```
+
+```{r}
+combined.df.scaled.plot %>% filter(diagSub == "UC" & timepoint == "T0") %>%  count(huprot)
+```
+
+```{r}
+partdiagColVec <- diagSubColVec[combined.df.scaled.plot$diagSub]
+names(partdiagColVec) <- combined.df.scaled.plot$participant_id
+partdiagColVec
+```
+
+# Plots
+
+```{r, fig.height=8, fig.width=10}
+p <- combined.df.scaled.plot %>%
+  filter(timepoint == "T0") %>% 
+  select(participant_id, `Th1\nFeatures`, `Th17\nFeatures`, `PD1Hi Tfh\nFeatures`) %>% 
+  ggradar(
+    grid.label.size = 0,  
+    axis.label.size = 8.5,
+    group.line.width = 1,
+    group.point.size = 2,
+    gridline.mid.colour = "grey",
+    background.circle.transparency = 0.2,
+    fill = T, 
+    fill.alpha = 0.025,
+    centre.y = 0, 
+    group.colours = NULL,
+  ) + 
+  guides(fill = "none") +
+  scale_color_manual(values = partdiagColVec) +
+  scale_fill_manual(values = partdiagColVec) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 24, face = "bold")
+  ) + 
+  guides(color = guide_legend(nrow = 1))
+
+# https://stackoverflow.com/questions/61105285/manually-adjust-alpha-after-plot-is-created
+p$layers[[9]]$aes_params$alpha <- 0.25 # line alpha
+p$layers[[10]]$aes_params$alpha <- 0.5 # dot alpha
+
+p$layers[[10]]$aes_params$stroke <- 1
+
+p
+```
+
+```{r, fig.height=8, fig.width=10}
+p <- combined.df.scaled.plot %>%
+  filter(timepoint == "T0") %>% 
+  select(diagSub, `Th1\nFeatures`, `Th17\nFeatures`, `PD1Hi Tfh\nFeatures`) %>% 
+  mutate(diagSub = fct_rev(diagSub)) %>% 
+  ggradar(
+    grid.label.size = 0,  
+    axis.label.size = 8.5,
+    group.line.width = 3,
+    group.point.size = 7.5,
+    gridline.mid.colour = "grey",
+    background.circle.transparency = 0.2,
+    fill = T, 
+    fill.alpha = 0.15,
+    centre.y = 0
+  ) + 
+  guides(fill = "none") +
+  scale_color_manual(values = diagSubColVec) +
+  scale_fill_manual(values = diagSubColVec) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 24, face = "bold")
+  )
+
+# https://stackoverflow.com/questions/61105285/manually-adjust-alpha-after-plot-is-created
+p$layers[[9]]$aes_params$alpha <- 0.75 # line alpha
+p$layers[[10]]$aes_params$alpha <- 0.75 # dot alpha
+
+p
+```
+
+```{r, fig.height=8, fig.width=10}
+p <- combined.df.scaled.plot %>%
+  filter(timepoint == "T0" & diagSub == "cCD" & antitnf_response %in% c("NOA", "FR", "PR", "NR")) %>% 
+  select(antitnf_response, `Th1\nFeatures`, `Th17\nFeatures`, `PD1Hi Tfh\nFeatures`) %>% 
+  ggradar(
+    grid.label.size = 0,  
+    axis.label.size = 8.5,
+    group.line.width = 3,
+    group.point.size = 7.5,
+    gridline.mid.colour = "grey",
+    background.circle.transparency = 0.2,
+    fill = T, 
+    fill.alpha = 0.15,
+    centre.y = 0
+  ) + 
+  guides(fill = "none") +
+  scale_color_manual(values = atnfColVec,
+                     labels = c("Not on Anti-TNF", "Full Responder", "Partial Responder")
+  ) +
+  scale_fill_manual(values = atnfColVec) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 20, face = "bold")
+  )
+
+# https://stackoverflow.com/questions/61105285/manually-adjust-alpha-after-plot-is-created
+p$layers[[9]]$aes_params$alpha <- 0.75 # line alpha
+p$layers[[10]]$aes_params$alpha <- 0.75 # dot alpha
+
+p
+```
+
+```{r, fig.height=8, fig.width=10}
+p <- combined.df.scaled.plot %>%
+  filter(timepoint == "R" & diagSub == "cCD" & antitnf_response %in% c("NOA", "FR", "PR", "NR")) %>% 
+  select(antitnf_response, `Th1\nFeatures`, `Th17\nFeatures`, `PD1Hi Tfh\nFeatures`) %>% 
+  ggradar(
+    grid.label.size = 0,  
+    axis.label.size = 8.5,
+    group.line.width = 3,
+    group.point.size = 7.5,
+    gridline.mid.colour = "grey",
+    background.circle.transparency = 0.2,
+    fill = T, 
+    fill.alpha = 0.15,
+    centre.y = 0
+  ) + 
+  guides(fill = "none") +
+  scale_color_manual(values = atnfColVec,
+                     labels = c("Full Responder", "Partial Responder")
+  ) +
+  scale_fill_manual(values = atnfColVec) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 20, face = "bold")
+  )
+
+# https://stackoverflow.com/questions/61105285/manually-adjust-alpha-after-plot-is-created
+p$layers[[9]]$aes_params$alpha <- 0.75 # line alpha
+p$layers[[10]]$aes_params$alpha <- 0.75 # dot alpha
+
+p
+```
+
+
+```{r, fig.height=8, fig.width=10}
+p <- combined.df.scaled.plot %>%
+  filter(timepoint == "T0" & diagSub == "UC" & antitnf_response %in% c("NOA", "FR", "PR", "NR")) %>% 
+  select(antitnf_response, `Th1\nFeatures`, `Th17\nFeatures`, `PD1Hi Tfh\nFeatures`) %>% 
+  ggradar(
+    grid.label.size = 0,  
+    axis.label.size = 8.5,
+    group.line.width = 3,
+    group.point.size = 7.5,
+    gridline.mid.colour = "grey",
+    background.circle.transparency = 0.2,
+    fill = T, 
+    fill.alpha = 0.15,
+    centre.y = 0
+  ) + 
+  guides(fill = "none") +
+  scale_color_manual(values = atnfColVec,
+                     labels = c("Not on Anti-TNF", "Partial Responder", "Nonresponder")
+  ) +
+  scale_fill_manual(values = atnfColVec) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 20, face = "bold")
+  )
+
+# https://stackoverflow.com/questions/61105285/manually-adjust-alpha-after-plot-is-created
+p$layers[[9]]$aes_params$alpha <- 0.75 # line alpha
+p$layers[[10]]$aes_params$alpha <- 0.75 # dot alpha
+
+p
+```
+
+
+```{r, fig.height=8, fig.width=10}
+p <- combined.df.scaled.plot %>%
+  filter(timepoint == "T0" & diagSub == "UC") %>% 
+  mutate(anca = ifelse(participant_id %in% c("001-036", "001-038"), "ENO1+", "ENO1-")) %>% 
+  mutate(anca = fct_relevel(anca, c("ENO1+", "ENO1-"))) %>% 
+  select(anca, `Th1\nFeatures`, `Th17\nFeatures`, `PD1Hi Tfh\nFeatures`) %>% 
+  ggradar(
+    grid.label.size = 0,  
+    axis.label.size = 8.5,
+    group.line.width = 3,
+    group.point.size = 7.5,
+    gridline.mid.colour = "grey",
+    background.circle.transparency = 0.2,
+    fill = T, 
+    fill.alpha = 0.25,
+    centre.y = 0
+    # group.colours = T
+  ) + 
+  guides(fill = "none") +
+  scale_color_manual(values = c("ENO1+" = "purple", "ENO1-" = "gray60")) +
+  scale_fill_manual(values = c("ENO1+" = "purple", "ENO1-" = "gray60")) +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 24, face = "bold")
+  )
+
+# https://stackoverflow.com/questions/61105285/manually-adjust-alpha-after-plot-is-created
+p$layers[[9]]$aes_params$alpha <- 0.75 # line alpha
+p$layers[[10]]$aes_params$alpha <- 0.75 # dot alpha
+
+p
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
+

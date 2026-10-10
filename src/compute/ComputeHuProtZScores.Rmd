@@ -1,0 +1,71 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+In this notebook, I will take the Z score data from the HuProt analysis (which is in wide format) and convert it to a long format. I will also add additional metadata to the file before outputting.
+
+# Setup
+
+```{r}
+library(tidyverse)
+library(stringi)
+```
+
+# HuProt Data
+
+## Load
+
+```{r}
+hits.wide <- read_csv("data/huprot/Regeneron_90_RawLog2MFI_ZScore_Hits_635nm_red.csv")
+hits.wide
+```
+
+## Convert to Long
+
+```{r}
+hits.wide.renamed <- hits.wide %>% 
+  select(-Block, -Column, -Rows, -anti_gst) %>% 
+  separate(col = Name, into =  c("Gene", "UniProt"), sep = "\\|", ) 
+
+hits.wide.renamed
+```
+
+Let's confirm that the errors are expected
+
+```{r}
+hits.wide[c(632, 21997, 22970, 22972, 22979, 22985, 22994, 22996, 23002, 23008, 23017, 23029, 23030, 23031, 23032, 23033, 23034, 23035, 23036, 23037, 23038:23059),]
+```
+
+"\xa0" indicates a space, which is in the original input file for entries 633 ("FLJ11939 |NA") and 22072 ("PCDHGC3 |NA").
+
+The rest of the NA rows are true NA, where there is not a corresponding UniProt identifier (and no separating "|")
+
+```{r}
+hits.wide.renamed %>% filter(ID %in% c("JHU03316.B1C4R50", "JHU03126.B19C15R14"))
+```
+
+
+```{r}
+hits.wide.renamed[c(632, 21997),]
+
+hits.wide.renamed <- hits.wide.renamed %>% 
+  mutate(Gene = ifelse(ID == "JHU03316.B1C4R50", "FLJ11939", Gene)) %>% 
+  mutate(Gene = ifelse(ID == "JHU03126.B19C15R14", "PCDHGC3", Gene))
+
+hits.wide.renamed[c(632, 21997),]
+```
+
+
+
+```{r}
+hits.long <- hits.wide.renamed %>% 
+  pivot_longer(cols = c(-Gene, -UniProt, -ID), names_to = "cdi_id", values_to = "zscore")
+
+hits.long
+```
+
+```{r}
+write_csv(hits.long, "out/huprot/huprot_zscorehits_igg.csv")
+```
+

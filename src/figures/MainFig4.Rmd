@@ -1,0 +1,696 @@
+---
+title: "Main Figure 4"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Main Figure 4
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(tidytext)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+colPre <-  colcCD
+colPost <- "#ee82ee"
+
+colCelltypes <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+names(colCelltypes) <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+
+`%notin%` <- Negate(`%in%`)
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+## Obs
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+## TNF
+
+```{r}
+tnfjak.paths <- list.files("out/decoupler/progeny/mlm_tnfjak", full.names = T)
+tnfjak.paths
+
+tnfjak.paths <- tnfjak.paths[str_detect(tnfjak.paths, "estimate.csv")]
+tnfjak.paths
+```
+
+
+```{r}
+tnfjak.list <- lapply(tnfjak.paths, function(thispath) read_csv(thispath, show_col_types = F))
+
+tnfjak.df <- plyr::ldply(tnfjak.list)
+
+tnf.df <- tnfjak.df %>% 
+  rename(TNF = TNFa) %>% 
+  select(barcode, TNF) %>% 
+  rename(TNF = TNF)
+
+tnf.df
+```
+
+```{r}
+obs.dc <- tnf.df %>% 
+    left_join(obs %>% rownames_to_column("barcode"), ., by = "barcode")
+
+obs.dc %>% select(colnames(tnf.df))
+```
+
+# TNF
+
+```{r, fig.width=3.5, fig.height=4}
+PlotBoxplotsFeatures(
+  df = obs.dc %>% filter(timepoint == "T0"),
+  features = c("TNF"),
+  exportObservationDF = T
+) %>% 
+  ggplot(aes(y = featureVal, x = celltype)) + 
+  geom_violin(scale = "width", aes(fill = celltype)) + 
+  geom_boxplot(outlier.shape = NA, width = 0.4) + 
+  scale_fill_manual(values = colCelltypes) +
+  labs(
+    y = "TNF Pathway Score"
+  ) +
+  guides(fill = guide_legend(nrow = 2)) +
+  theme_light() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_blank(),
+    legend.position = "top",
+    strip.background = element_rect(fill = "white", color = "black", linewidth = 1.5),
+    strip.text = element_text(color = "black", size = 16, face = "bold")
+  ) 
+```
+
+```{r, fig.width=4.5, fig.height=4}
+PlotBoxplotsFeatures(
+  obs.dc %>% 
+    filter(diagSub != "UC") %>% 
+    filter(timepoint != "R2") %>% 
+    filter(!(diagSub == "iCD" & timepoint != "T0")) %>% 
+    filter(!(diagSub == "UC" & antitnf_response == "NOA")) %>% 
+    filter(!(diagSub == "cCD" & antitnf_response == "NM")) %>% 
+    filter(!(diagSub == "cCD" & antitnf_response == "NOA")),
+  features = "TNF",
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("Myeloid", "TNKILC"),
+  xVar = "diagSub",
+  fillVar = "timepoint",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(timepoints = n_distinct(timepoint)) %>% 
+  ungroup %>% 
+  filter(!(timepoint == "R" & diagSub %notin% c("cCD", "UC"))) %>%
+  mutate(timegroup = ifelse(diagSub %in% c("cCD", "UC"), as.character(timepoint), as.character(diagSub))) %>% 
+  mutate(timegroup = ifelse(timegroup == "T0", "PreTx\ncCD", timegroup)) %>% 
+  mutate(timegroup = ifelse(timegroup == "R", "PostTx\ncCD", timegroup)) %>% 
+  mutate(timegroup = fct_relevel(timegroup, c("FGID", "iCD", "PreTx\ncCD", "PostTx\ncCD"))) %>% 
+  mutate(timepoint = ifelse(timepoint == "T0", "PreTx", "PostTx")) %>% 
+  mutate(timepoint = fct_relevel(timepoint, c("PreTx", "PostTx"))) %>% 
+  group_by(timegroup, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(., aes(x = timegroup, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_line(aes(group = participant_id), color = "black", lwd = 0.75, alpha = 0.85) +
+  geom_point(aes(fill = timegroup), stroke = 2, shape = 21,
+             position = position_jitter(width = 0.0, seed = thisseed), alpha = 0.75, size = 4) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1, alpha = 0.4) +
+  facet_grid(~celltype, scales = "free") +
+  scale_fill_manual(values = c("FGID" = colFGID, "iCD" = coliCD, "PreTx\ncCD" = colcCD, "PostTx\ncCD" = colPost)) +
+  guides(color = "none") +
+  stat_compare_means(
+    comparisons = list(
+    c("PreTx\ncCD", "PostTx\ncCD"),
+    c("iCD", "PreTx\ncCD"),
+    c("FGID", "PreTx\ncCD")
+    ),
+    label = "p.format", method = "wilcox.test", vjust = 1.4, size = 6, label.y = c(16, 18.5,21), tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean TNF Pathway Score",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.x = unit(0.1, "cm")
+  )
+```
+
+# cCD Pre vs. Post DE
+
+```{r}
+de.ccdprepost.cellatnftypes.df <- read_csv("out/deseq2/DE__cCDPostvsPre_atnfcelltypes.csv") %>% 
+  mutate(annotation = fct_relevel(annotation, names(colCelltypes)))
+
+de.ccdprepost.cellatnftypes.df
+```
+
+```{r, fig.width=14, fig.height=8}
+de.ccdprepost.cellpreposttypes.range <- de.ccdprepost.cellatnftypes.df$log2FoldChange %>% range %>% abs %>% max %>% ceiling
+de.ccdprepost.cellpreposttypes.range <- c(-de.ccdprepost.cellpreposttypes.range, de.ccdprepost.cellpreposttypes.range)
+
+ggplot(de.ccdprepost.cellatnftypes.df %>% 
+         mutate(labelname = ifelse((padj <= 0.001), gene, NA)) %>% 
+         mutate(prepost = ifelse(sign(stat) == 1, "PostTx", "PreTx")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, prepost, "Not DE")) %>% 
+         mutate(prepost = fct_relevel(prepost, c("PreTx", "PostTx"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(aes(size = -log10(padj)), color = "black", seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = c("PreTx" = colPre, "PostTx" = colPost), limits = c("PreTx", "PostTx")) +
+  scale_fill_manual(values = c("PreTx" = colPre, "PostTx" = colPost, "Not DE" = "gray50"), limits = c("PreTx", "Not DE", "PostTx"), 
+                    labels = c("PreTx" = "Enriched in Pre-treatment cCD", 
+                               "Not DE" = "Not DE", 
+                               "PostTx" = "Enriched in Post-treatment cCD")) +
+  scale_size_continuous(range = c(2,4)) +
+  coord_cartesian(xlim = de.ccdprepost.cellpreposttypes.range) +
+  facet_wrap(~annotation, scales = "fixed", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)",
+    title = NULL
+  ) +
+  theme_light() +
+  theme(
+    legend.text = element_text(size = 20, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"), 
+    axis.text = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+# GSEA
+
+```{r}
+gsea.ccdprepost.atnfcelltypes.df <- read_csv("out/gsea/GSEA__cCDPostvsPre_atnfcelltypes.csv") %>% 
+  mutate(annotation = fct_relevel(annotation, names(colCelltypes)))
+
+gsea.ccdprepost.atnfcelltypes.df
+```
+
+```{r, fig.width=8.75, fig.height=8}
+range.x.max <- min(gsea.ccdprepost.atnfcelltypes.df %>% filter(NES <0) %>% pull(NES)) %>% abs
+range.fill.max <- -log10(gsea.ccdprepost.atnfcelltypes.df %>% filter(NES<0) %>% pull(padj) %>% min) %>% ceiling
+
+gsea.ccdprepost.atnfcelltypes.df %>% 
+  as_tibble %>% 
+  filter(padj <= 0.05) %>% 
+  filter(NES < 0) %>% 
+  mutate(NES = -NES) %>% 
+  group_by(annotation) %>% 
+  slice_min(order_by = padj, n = 10) %>%
+  slice_max(order_by = NES, n = 10) %>%
+  mutate(pathway = str_wrap(pathway, width = 25)) %>%
+  arrange(-NES) %>% 
+  ungroup %>% 
+  ggplot(aes(y = reorder_within(pathway, NES, annotation), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colPre, limits = c(1,range.fill.max), breaks = seq(1,range.fill.max,1)) +
+  facet_wrap(~annotation, scales = "free_y", ncol=2) +
+  coord_cartesian(xlim = c(1,2.5)) +
+  scale_x_continuous(breaks = seq(1,2.5, 0.5)) +
+  scale_y_reordered() +
+  labs(
+    y=NULL, 
+    fill = "Adjusted Pvalue (-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in Pre-Treatment cCD"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.title = element_text(size = 14, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold")
+  )
+```
+
+# Cell Frequency
+
+```{r, fig.width=32, fig.height=6}
+PlotBoxplotsProp(
+  obs %>% 
+    mutate(atnf = paste(diagSub, antitnf, sep = ".")) %>%
+    mutate(ibd.atnf = case_when(
+      diagSub == "FGID" ~ "FGID",
+      diagSub == "iCD" ~ "iCD",
+      diagSub == "cCD" & timepoint != "T0" & antitnf_response %in% c("FR", "PR", "NR") ~ "Post.cCD",
+      diagSub == "cCD" & timepoint != "T0" & antitnf_response %notin% c("FR", "PR", "NR") ~ "Other.cCD",
+      diagSub == "cCD" & timepoint == "T0" ~ "Pre.cCD",
+      diagSub == "UC" ~ "UC",
+    )) %>%
+    mutate(ibd.atnf = fct_relevel(ibd.atnf, c("FGID", "iCD", "Other.cCD", "Pre.cCD", "Post.cCD", "UC"))) %>%
+    filter(diagSub != "UC") %>% 
+    filter(!(diagSub == "iCD" & timepoint == "R")) %>% 
+    filter(ibd.atnf != "Other.cCD" & timepoint != "R2") %>% 
+    filter(!(diagSub == "cCD" & antitnf_response %notin% c("FR", "PR", "NR"))) %>% 
+    droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "TFPI2Hi Fibro.", "Inflm. Mac", "Treg", "XCL+ NK", "MNP", "Th17"),
+  relative.to = "celltype",
+  xVar = "ibd.atnf",
+  fillVar = "antitnf_response",
+  fillVector = ibdAtnfColVec,
+  testComp = ibdonlyAtnf.comp,
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  mutate(antitnf_response = fct_relevel(antitnf_response, c("FR", "PR"))) %>% 
+  mutate(participant_id = str_split(biopsy, "_", simplify=T)[,1]) %>%
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "TFPI2Hi Fibro.", "Inflm. Mac", "Treg", "XCL+ NK", "MNP", "Th17"))) %>% 
+  ggplot(aes(x = ibd.atnf, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_line(lwd = 1, aes(group=participant_id, color = antitnf_response)) +
+  geom_point(aes(fill = ibd.atnf), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_wrap(~cellstate, scales = "free_y", nrow = 1) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = c(colFGID, coliCD, colPre, colPost)) +
+  scale_color_manual(values = atnfColVec, breaks = c("FR", "PR")) +
+  stat_compare_means(comparisons = list(c("Pre.cCD", "Post.cCD")), label = "p.format",
+                     vjust = 2, size = 8, tip.length=0.05, bracket.size = 1.2) + 
+  scale_x_discrete(labels = c("FGID", "iCD", "PreTx\ncCD", "PostTx\ncCD")) +
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none", color = guide_legend(override.aes = list(lwd = 5))) +
+  labs(
+    y = "Cell State %\n(Relative to Cell Type)", 
+    fill = NULL,
+    color = "Anti-TNF\nResponse"
+    ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 24, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.key.height = unit(1,"cm"),
+    legend.key.width = unit(1,"cm"),
+    legend.position = "right",
+    legend.text = element_text(size = 20, face = "bold", hjust = 0),
+    legend.title = element_text(size = 20, face = "bold"),
+    panel.spacing.x = unit(0.5,"cm"),
+    strip.text = element_text(size = 28, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  ) + guides(size = guide_legend(nrow = 1))
+```
+
+```{r, fig.width=5, fig.height=3}
+PlotBoxplotsProp(
+  obs %>% filter(diagSub == "cCD" & antitnf_response %in% c("FR", "PR") & timepoint %in% c("T0", "R")) %>% mutate(biopsy_dummy = biopsy) %>%  droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Inflm. Mac"),
+  relative.to = "celltype",
+  xVar = "timepoint",
+  fillVar = "antitnf_response",
+  exportDF = T,
+  minDenomFreq= 10
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  ggplot(aes(x = timepoint, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_line(aes(group = participant_id, color = antitnf_response), lwd = 1) +
+  geom_point(aes(fill = antitnf_response), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0, seed = thisseed)) +
+  facet_grid(~antitnf_response, scales = "free", labeller = as_labeller(c("FR" = "Full Responders", "PR" = "Partial Responders"))) +        
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  stat_compare_means(comparisons = list(c("T0", "R")), method = "wilcox.test", label = "p.format", vjust = 1.4, size = 6, tip.length = 0.05, bracket.size = 1) + 
+  scale_x_discrete(labels = c("cCD\nPreTx", "cCD\nPostTx")) +
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none", color = "none") +
+  labs(
+    x = NULL, 
+    y = "Inflm. Mac Cell State %\n(Relative to Myeloid Cells)", 
+    size = "# Cells", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 17, face = "bold", hjust=1),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=5, fig.height=3}
+PlotBoxplotsProp(
+  obs %>% filter(diagSub == "cCD" & antitnf_response %in% c("FR", "PR") & timepoint %in% c("T0", "R")) %>% mutate(biopsy_dummy = biopsy) %>%  droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1"),
+  relative.to = "celltype",
+  xVar = "timepoint",
+  fillVar = "antitnf_response",
+  exportDF = T,
+  minDenomFreq= 10
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  ggplot(aes(x = timepoint, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_line(aes(group = participant_id, color = antitnf_response), lwd = 1) +
+  geom_point(aes(fill = antitnf_response), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0, seed = thisseed)) +
+  facet_grid(~antitnf_response, scales = "free", labeller = as_labeller(c("FR" = "Full Responders", "PR" = "Partial Responders"))) +        
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  stat_compare_means(comparisons = list(c("T0", "R")), method = "wilcox.test", label = "p.format", vjust = 1.4, size = 6, tip.length = 0.05, bracket.size = 1) + 
+  scale_x_discrete(labels = c("cCD\nPreTx", "cCD\nPostTx")) +
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none", color = "none") +
+  labs(
+    x = NULL, 
+    y = "Th1 Cell State %\n(Relative to TNKILCs)", 
+    size = "# Cells", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 17, face = "bold", hjust=1),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=5, fig.height=3}
+PlotBoxplotsProp(
+  obs %>% filter(diagSub == "cCD" & antitnf_response %in% c("FR", "PR") & timepoint %in% c("T0", "R")) %>% mutate(biopsy_dummy = biopsy) %>%  droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("MNP"),
+  relative.to = "celltype",
+  xVar = "timepoint",
+  fillVar = "antitnf_response",
+  exportDF = T,
+  minDenomFreq= 10
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  ggplot(aes(x = timepoint, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_line(aes(group = participant_id, color = antitnf_response), lwd = 1) +
+  geom_point(aes(fill = antitnf_response), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0, seed = thisseed)) +
+  facet_grid(~antitnf_response, scales = "free", labeller = as_labeller(c("FR" = "Full Responders", "PR" = "Partial Responders"))) +        
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  stat_compare_means(comparisons = list(c("T0", "R")), method = "wilcox.test", label = "p.format", vjust = 1.4, size = 6, tip.length = 0.05, bracket.size = 1) + 
+  scale_x_discrete(labels = c("cCD\nPreTx", "cCD\nPostTx")) +
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none", color = "none") +
+  labs(
+    x = NULL, 
+    y = "MNP Cell State %\n(Relative to Myeloid Cells)", 
+    size = "# Cells", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 17, face = "bold", hjust=1),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=5, fig.height=3}
+PlotBoxplotsProp(
+  obs %>% filter(diagSub == "cCD" & antitnf_response %in% c("FR", "PR") & timepoint %in% c("T0", "R")) %>% mutate(biopsy_dummy = biopsy) %>%  droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th17"),
+  relative.to = "celltype",
+  xVar = "timepoint",
+  fillVar = "antitnf_response",
+  exportDF = T,
+  minDenomFreq= 10
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  ggplot(aes(x = timepoint, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_line(aes(group = participant_id, color = antitnf_response), lwd = 1) +
+  geom_point(aes(fill = antitnf_response), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0, seed = thisseed)) +
+  facet_grid(~antitnf_response, scales = "free", labeller = as_labeller(c("FR" = "Full Responders", "PR" = "Partial Responders"))) +        
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  stat_compare_means(comparisons = list(c("T0", "R")), method = "wilcox.test", label = "p.format", vjust = 1.4, size = 6, tip.length = 0.05, bracket.size = 1) + 
+  scale_x_discrete(labels = c("cCD\nPreTx", "cCD\nPostTx")) +
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none", color = "none") +
+  labs(
+    x = NULL, 
+    y = "Th17 Cell State %\n(Relative to TNKILCs)", 
+    size = "# Cells", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 17, face = "bold", hjust=1),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Gene Expression
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+```{r, fig.width=8, fig.height=8}
+plot.a <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% 
+    filter(diagSub %in% c("cCD") & antitnf_response %in% c("FR", "PR") & timepoint != "R2"),
+  seurat = "seuobj",
+  features = c("TNF", "IFNG", "IL17A"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  xVar = "antitnf_response",
+  fillVar = "timepoint",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, timepoint, tgroup, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  mutate(timepoint = ifelse(timepoint == "T0", "cCD PreTx", "cCD PostTx")) %>% 
+  mutate(timepoint = fct_relevel(timepoint, c("cCD PreTx", "cCD PostTx"))) %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_line(aes(group = participant_id, color = antitnf_response), lwd = 1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitterdodge(jitter.width = 1, seed = thisseed), alpha = 0.6, size = 4) +
+  facet_grid(featureVar~timepoint, scales = "free_y") +
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("cCD\nFR", "cCD\nPR")) +
+  # stat_compare_means( comparisons = list(c("cCD\nPreTx", "cCD\nPostTx")),
+  stat_compare_means( comparisons = list(c("FR","PR")), method = "wilcox.test",
+    label = "p.format", vjust = 1.4, size = 5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = "Mean Gene Expression (Thelper Cells)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    panel.spacing.x = unit(0.5, "cm"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+
+plot.b <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% 
+    filter(diagSub %in% c("cCD") & antitnf_response %in% c("FR", "PR") & timepoint != "R2"),
+  seurat = "seuobj",
+  features = c("IL21", "IL22", "IL26"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  xVar = "antitnf_response",
+  fillVar = "timepoint",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>%
+  group_by(antitnf_response, timepoint, tgroup, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  mutate(timepoint = ifelse(timepoint == "T0", "cCD PreTx", "cCD PostTx")) %>% 
+  mutate(timepoint = fct_relevel(timepoint, c("cCD PreTx", "cCD PostTx"))) %>% 
+  ggplot(., aes(x = antitnf_response, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean",  color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=1) +
+  geom_line(aes(group = participant_id, color = antitnf_response), lwd = 1) +
+  geom_point(aes(fill = antitnf_response), shape = 21, stroke = 2, color = "black",
+             position = position_jitterdodge(jitter.width = 1, seed = thisseed), alpha = 0.6, size = 4) +
+  facet_grid(featureVar~timepoint, scales = "free_y") +
+  scale_fill_manual(values = atnfColVec) +
+  scale_color_manual(values = atnfColVec) +
+  scale_x_discrete(labels = c("cCD\nFR", "cCD\nPR")) +
+  # stat_compare_means( comparisons = list(c("cCD\nPreTx", "cCD\nPostTx")),
+  stat_compare_means( comparisons = list(c("FR","PR")), method = "wilcox.test",
+    label = "p.format", vjust = 1.4, size = 5, tip.length = 0.05, bracket.size = 1) +
+  labs(
+    y = NULL,
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    shape = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    panel.spacing.x = unit(0.5, "cm"),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 16, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+
+plot.a + plot.b
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

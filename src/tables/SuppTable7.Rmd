@@ -1,0 +1,755 @@
+---
+title: "Supplemental Table 7 - Linear Regressions"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile linear regression data into a single Excel file.
+
+# Setup
+
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(writexl)
+
+thisseed <- 231103
+
+source("../functions/ComparisonPlottingFxns.R")
+
+`%notin%` <- Negate(`%in%`)
+```
+
+
+# Read Data
+
+## Seurat Object
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+## IL-17 Gene Sets
+
+```{r}
+il17.list <- lapply(list.files("data/decoupler/il17/wsum_kegg", full.names = T), 
+                    function(thispath) read_csv(thispath, show_col_types = F))
+
+il17.df <- plyr::ldply(il17.list)
+
+il17.df
+```
+
+```{r}
+il17.names <- c("Antimicrobial", "Chemokine", "Cytokine", "Remodeling")
+names(il17.names) <- c("il17af_antimicrobial", "il17af_chemokines", "il17af_cytokines", "il17af_remodeling")
+il17.names
+```
+
+```{r}
+seuobj <- AddMetaData(
+  seuobj,
+  il17.df %>% 
+    rename_with(~il17.names[.x], .cols = starts_with("il17af")) %>% 
+    column_to_rownames("barcode")
+)
+seuobj@meta.data
+```
+
+## TCRs
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+```
+
+```{r}
+seuobj <- AddMetaData(seuobj,
+            tcrs %>% select(-data_folder) %>% mutate(cdr3.Paired = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% column_to_rownames("barcode"))
+seuobj@meta.data %>% filter(celltype == "TNKILC")
+```
+
+## mTiRP
+
+```{r}
+tirp <- read_csv("out/tcr/tirp/241120_predictCOL_tirp.csv")
+tirp
+```
+
+```{r}
+seuobj <- AddMetaData(seuobj,
+                      seuobj@meta.data %>% 
+                        rownames_to_column("barcode") %>% 
+                        left_join(
+                          .,
+                          tirp %>% distinct(cdr3, .keep_all = T), 
+                          by = c("cdr3.TRB" = "cdr3")
+                        ) %>% 
+                        column_to_rownames("barcode") %>% 
+                        filter(celltype == "TNKILC") %>% 
+                        select(setdiff(colnames(tirp), "cdr3"))
+            
+)
+seuobj@meta.data %>% filter(celltype == "TNKILC")
+```
+
+## IHC
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+```
+
+```{r}
+p20.tojoin <- p20 %>% 
+  filter(str_ends(colon_site_ihc, "-2", negate = T)) %>% # remove 2nd 001-047 sample
+  filter(participant_id %in% seuobj$participant_id) %>% 
+  dplyr::rename(colon_site_ihc_p20 = colon_site_ihc) %>% 
+  select(participant_id, colon_site_ihc_p20, colon_site_rna, area, `BCMA+`:`NCR1+`) %>% 
+  pivot_longer(cols = `BCMA+`:`NCR1+`, names_to = "marker", values_to = "density")
+  
+p20.tojoin
+```
+
+# Regressions
+
+## IFNG vs. Th1
+
+```{r}
+ifng.stat.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0"),
+  senderCol = "cellsubtype",
+  senderVal = c("Thelper", "NK", "CTL", "InvariantT"),
+  features.sender = c("IFNG"),
+  senderProp = FALSE,
+  xLab = "STAT1 Expresion",
+  receiverCol = "cellstate",
+  receiverVal = c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"),
+  features.receiver = c("STAT1"),
+  receiverProp = FALSE,
+  yLab = "IFNG Expression",
+  fillVar = "antitnf_response",
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+  ) %>% 
+  drop_na %>% 
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  separate(receiverName, into = c("group2", "feature2"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2_value = receiverExp
+  ) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+ifng.stat.df
+```
+
+## IFNG vs. CXCL9
+
+```{r}
+cxcl9.stat.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0"),
+  senderCol = "cellsubtype",
+  senderVal = c("Thelper"),
+  features.sender = c("IFNG"),
+  senderProp = FALSE,
+  xLab = "CXCL9 Expresion",
+  receiverCol = "cellstate",
+  receiverVal = c("TFPI2Hi Fibro.", "Inflm. Mac"),
+  features.receiver = c("CXCL9"),
+  receiverProp = FALSE,
+  yLab = "IFNG Expression",
+  fillVar = "antitnf_response",
+  minSenderFreq = 10,
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  r2level = 0.999, 
+  ncols = 10,
+  swap_facets = T,
+  doTests = F,
+  exportSampleDF = T
+  ) %>% 
+  drop_na %>% 
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  separate(receiverName, into = c("group2", "feature2"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2_value = receiverExp
+  ) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+cxcl9.stat.df
+```
+
+## IL17A vs. IL-17 Gene Sets
+
+```{r}
+il17a.il17sets.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% filter(diagSub %in% c("cCD", "UC")) %>% droplevels,
+  seurat = "seuobj",
+  senderCol = "cellsubtype",
+  senderVal = "Thelper",
+  features.sender = c("IL17A"),
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 10,
+  receiverCol = "celltype",
+  receiverVal = c("ColEpi", "Stroma", "Myeloid"),
+  features.receiver = unname(il17.names),
+  receiverProp = FALSE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  facet_dir = "v",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  ncol = 4,
+  stripSize = 14,
+  axisXsize = 16,
+  axisYsize = 16,
+  regSize = 5,
+  groupReg = F,
+  fillReg = F,
+  exportSampleDF = T
+) %>%
+  mutate(receiverName = case_when(
+    receiverName == "ColEpi_Antimicrobial" ~ "ColEpi - Antimicrobial",
+    receiverName == "ColEpi_Chemokine" ~ "ColEpi - Chemokine",
+    receiverName == "Stroma_Chemokine" ~ "Stroma - Chemokine",
+    receiverName == "Stroma_Remodeling" ~ "Stroma - Remodeling",
+    receiverName == "Myeloid_Antimicrobial" ~ "Myeloid - Antimicrobial",
+    receiverName == "Myeloid_Chemokine" ~ "Myeloid - Chemokine",
+    receiverName == "Myeloid_Cytokine" ~ "Myeloid - Cytokine",
+    receiverName == "Myeloid_Remodeling" ~ "Myeloid - Remodeling"
+  )) %>% 
+  filter(!is.na(receiverName)) %>% 
+  mutate(receiverName = fct_relevel(receiverName, c(
+    "ColEpi - Antimicrobial",
+    "ColEpi - Chemokine",
+    "Stroma - Chemokine",
+    "Stroma - Remodeling",
+    "Myeloid - Antimicrobial",
+    "Myeloid - Chemokine",
+    "Myeloid - Cytokine",
+    "Myeloid - Remodeling"
+  ))) %>% 
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  separate(receiverName, into = c("group2", "feature2"), " - ") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2_value = receiverExp
+  ) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+il17a.il17sets.df
+```
+
+## Chemokine vs. MPO
+
+
+```{r}
+il17.tojoin <- PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>%  droplevels,
+  features = il17.names,
+  relative.to = "celltype",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(geneset = fct_recode(featureVar, !!!setNames(names(il17.names), il17.names))) %>%
+  rename(genescore = meanVal) %>% 
+  select(biopsy, participant_id, celltype, diagSub, antitnf_response, timepoint, geneset, genescore) 
+
+il17.tojoin
+```
+
+```{r}
+il17.p20 <- inner_join(il17.tojoin, p20.tojoin, by = "participant_id") %>% 
+  arrange(biopsy)
+
+il17.p20
+```
+
+```{r}
+chemo.mpo.df <- il17.p20 %>% 
+  filter(diagSub %in% c("cCD", "UC")) %>%
+  filter(celltype == "ColEpi") %>% 
+  filter(geneset %in% c("Chemokine")) %>% 
+  filter(marker == "MPO+") %>% 
+  filter(area == "EPI") %>% 
+  select(biopsy, colon_site_ihc_p20, colon_site_rna, diagSub, antitnf_response, celltype, geneset, genescore, area, marker, density) %>% 
+  rename(
+    colon_site_ihc = colon_site_ihc_p20,
+    group1 = celltype,
+    feature1 = geneset,
+    feature1_value = genescore,
+    group2 = area,
+    feature2 = marker,
+    feature2_value = density
+  )
+
+chemo.mpo.df
+```
+
+## TLS-like B Cell
+
+```{r}
+tlsbcell.prop.df <- SenderReceiver(
+    seuobj@meta.data %>% filter(timepoint == "T0")  %>%  droplevels,
+    seurat = "seuobj",
+    senderCol = "cellstate",
+    senderVal = c("GC-like BC"),
+    senderProp = TRUE,
+    senderRelative = "cellsubtype",
+    senderMinDenomFreq = 10,
+    receiverCol = "cellstate",
+  receiverVal = c("Prlf. BC"),
+    receiverProp = TRUE,
+    receiverRelative = "cellsubtype",
+    receiverMinDenomFreq = 10,
+    facetType = "grid",
+    facet_scales = "free_x",
+    facet_dir = "v",
+    fillVar = "antitnf_response",
+    ncol = 4,
+    stripSize = 14,
+    axisXsize = 16,
+    axisYsize = 16,
+    regSize = 5,
+    groupReg = T,
+    fillReg = T,
+    exportSampleDF = T
+) %>%
+  drop_na %>%
+  rename(
+    feature1 = senderExp,
+    feature1_value = prop.sender,
+    feature1_relgroup = cellsubtype.x,
+    feature1_count = annotation.freq.sender,
+    feature1_relgroup_count = denominator.freq.sender,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = cellsubtype.y,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-senderName, -receiverName) %>% 
+  relocate(feature1_value, feature1_count, feature1_relgroup, feature1_relgroup_count, .after = feature1) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+tlsbcell.prop.df
+```
+
+## CXCL13 vs. TLS-like B Cell
+
+```{r}
+cxcl13.tls.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% 
+    mutate(cellstate.b = ifelse(cellstate %in% c("GC-like BC", "Prlf. BC"), "TLS-like BC", as.character(cellstate))) %>% 
+    mutate(cellstate.b = as.factor(cellstate.b)) %>% 
+    droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate",
+  senderVal = "FDC",
+  features.sender = "CXCL13",
+  senderProp = FALSE,
+  minSenderFreq = 10,
+  receiverCol = "cellstate.b",
+  receiverVal = c("TLS-like BC"),
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  receiverMinDenomFreq = 10,
+  fillVar = "antitnf_response",
+  facetType = "grid",
+  facet_scales = "free_x",
+  facet_dir = "v",
+  ncol = 4,
+  stripSize = 14,
+  axisXsize = 16,
+  axisYsize = 16,
+  regSize = 5,
+  groupReg = F,
+  fillReg = F,
+  exportSampleDF = T
+) %>% 
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = celltype,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-receiverName) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+cxcl13.tls.df
+```
+
+## Th17 vs. Tfh
+
+```{r}
+tfhvsth.prop.df <- SenderReceiver(
+    seuobj@meta.data %>% filter(diagSub %in% c("cCD", "UC") & timepoint == "T0")  %>%  droplevels,
+    seurat = "seuobj",
+    senderCol = "cellstate",
+    senderVal = c("PD1Hi Tfh"),
+    senderProp = TRUE,
+    senderRelative = "cellsubtype",
+    senderMinDenomFreq = 10,
+    receiverCol = "cellstate",
+    receiverVal = c("Th17"),
+    receiverProp = TRUE,
+    receiverRelative = "cellsubtype",
+    receiverMinDenomFreq = 10,
+    facetType = "grid",
+    facet_scales = "free_x",
+    facet_dir = "v",
+    fillVar = "antitnf_response",
+    ncol = 4,
+    stripSize = 14,
+    axisXsize = 16,
+    axisYsize = 16,
+    regSize = 5,
+    groupReg = T,
+    fillReg = T,
+    exportSampleDF = T
+) %>%
+  drop_na %>%
+  rename(
+    feature1 = senderExp,
+    feature1_value = prop.sender,
+    feature1_relgroup = cellsubtype.x,
+    feature1_count = annotation.freq.sender,
+    feature1_relgroup_count = denominator.freq.sender,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = cellsubtype.y,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-senderName, -receiverName) %>% 
+  relocate(feature1_value, feature1_count, feature1_relgroup, feature1_relgroup_count, .after = feature1) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+tfhvsth.prop.df
+```
+
+```{r}
+tfhth.igg1.df <- SenderReceiver(
+    seuobj@meta.data %>% filter(diagSub %in% c("cCD", "UC") & timepoint == "T0") %>%  droplevels,
+    seurat = "seuobj",
+    senderCol = "cellstate",
+    senderVal = c("PD1Hi Tfh", "Th17"),
+    senderProp = TRUE,
+    senderRelative = "tgroup",
+    senderMinDenomFreq = 10,
+    receiverCol = "cellstate",
+    receiverVal = c("IgG1 PC"),
+    receiverProp = TRUE,
+    receiverRelative = "celltype",
+    receiverMinDenomFreq = 10,
+    facetType = "grid",
+    facet_scales = "free_x",
+    facet_dir = "v",
+    xVar = "diagSub",
+    fillVar = "antitnf_response",
+    ncol = 4,
+    stripSize = 14,
+    axisXsize = 16,
+    axisYsize = 16,
+    regSize = 5,
+    groupReg = T,
+    fillReg = T,
+    exportSampleDF = T
+) %>%
+  drop_na %>% 
+  rename(
+    feature1 = senderExp,
+    feature1_value = prop.sender,
+    feature1_relgroup = tgroup,
+    feature1_count = annotation.freq.sender,
+    feature1_relgroup_count = denominator.freq.sender,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = celltype,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-senderName, -receiverName) %>% 
+  relocate(feature1_value, feature1_count, feature1_relgroup, feature1_relgroup_count, .after = feature1) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(feature1, diagSub, antitnf_response, biopsy)
+
+tfhth.igg1.df
+```
+
+```{r}
+cxcl13.il17a.igg1.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(diagSub %in% c("cCD", "UC") & timepoint == "T0") %>%  droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate",
+  senderVal = c("PD1Hi Tfh", "Th17"),
+  features.sender = c("CXCL13", "IL17A"),
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 10,
+  receiverCol = "cellstate",
+  receiverVal = c("IgG1 PC"),
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  receiverMinDenomFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  facet_dir = "v",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  ncol = 4,
+  stripSize = 14,
+  axisXsize = 16,
+  axisYsize = 16,
+  regSize = 5,
+  groupReg = T,
+  fillReg = T,
+  exportSampleDF = T
+) %>% 
+  filter(senderName %in% c("PD1Hi Tfh_CXCL13", "Th17_IL17A")) %>% 
+  mutate(senderName = case_when(
+    senderName == "PD1Hi Tfh_CXCL13" ~ "PD1Hi Tfh - CXCL13",
+    senderName == "Th17_IL17A" ~ "Th17 - IL17A"
+  )) %>%
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), " - ") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = celltype,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-receiverName) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(group1, diagSub, antitnf_response, biopsy)
+
+cxcl13.il17a.igg1.df
+```
+
+## mTiRP
+
+```{r}
+mTiRP.atypmbc.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(diagSub != "iCD" & timepoint == "T0") %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    droplevels,
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate",
+  receiverVal = "Atyp. MBC",
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+)  %>%
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = celltype,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-receiverName) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(group1, diagSub, antitnf_response, biopsy)
+
+mTiRP.atypmbc.df
+```
+
+```{r}
+mTiRP.tls.df <- SenderReceiver(
+  seuobj@meta.data %>% 
+    filter(diagSub != "iCD" & timepoint == "T0") %>% 
+    mutate(cellstate.b = ifelse(cellstate %in% c("GC-like BC", "Prlf. BC"), "TLS-like BC", as.character(cellstate))) %>% 
+    mutate(cellstate.b = as.factor(cellstate.b)) %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate.b",
+  receiverVal = "TLS-like BC",
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+) %>%
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = celltype,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-receiverName) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(group1, diagSub, antitnf_response, biopsy)
+
+mTiRP.tls.df
+```
+
+```{r}
+mTiRP.igg1.df <- SenderReceiver(
+  seuobj@meta.data %>% filter(diagSub != "iCD" & timepoint == "T0") %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    droplevels,
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate",
+  receiverVal = "IgG1 PC",
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+)  %>%
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2 = receiverExp,
+    feature2_value = prop.receiver,
+    feature2_relgroup = celltype,
+    feature2_count = annotation.freq.receiver,
+    feature2_relgroup_count = denominator.freq.receiver
+  ) %>% 
+  select(-receiverName) %>% 
+  relocate(feature2_value, feature2_count, feature2_relgroup, feature2_relgroup_count, .after = feature2) %>% 
+  arrange(group1, diagSub, antitnf_response, biopsy)
+
+mTiRP.igg1.df
+```
+
+```{r, fig.width=26, fig.height=7}
+mtirp.th17.df <- SenderReceiver(
+  seuobj@meta.data %>% 
+    mutate(cellstate.tfh = ifelse(cellstate == "PD1Hi Tfh" & !is.na(cdr3.TRB), "PD1Hi Tfh", "Other")) %>% 
+    mutate(cellstate.tfh = fct_relevel(cellstate.tfh, c("PD1Hi Tfh", "Other"))) %>% 
+    filter(diagSub %in% c("UC")) %>% 
+    droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate.tfh",
+  senderVal = "PD1Hi Tfh",
+  features.sender = "mTiRP",
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 50,
+  receiverCol = "cellstate",
+  receiverVal = "Th17",
+  features.receiver = c("IL17A", "IL17F", "IL21", "IL22", "IL26"),
+  receiverProp = FALSE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  exportSampleDF = T
+) %>% 
+  drop_na %>%
+  separate(senderName, into = c("group1", "feature1"), "_") %>% 
+  separate(receiverName, into = c("group2", "feature2"), "_") %>% 
+  rename(
+    feature1_value = senderExp,
+    feature2_value = receiverExp
+  ) %>% 
+  arrange(feature2, diagSub, antitnf_response, biopsy)
+
+mtirp.th17.df
+```
+
+# Combine Lists
+
+```{r}
+regression.out <- list(
+  "Key" = data.frame(), 
+  "IFNG vs. STAT1" = ifng.stat.df,
+  "IFNG vs. CXCL9" = cxcl9.stat.df,
+  "IL17A vs. IL-17 Gene Sets" = il17a.il17sets.df,
+  "Chemokine vs. MPO" = chemo.mpo.df,
+  "GC-like BC vs. Prlf. BC" = tlsbcell.prop.df,
+  "CXCL13 vs. TLS" = cxcl13.tls.df,
+  "PD1HiTfh vs. Th17" = tfhvsth.prop.df,
+  "PD1HiTfh+Th17 vs. IgG1" = tfhth.igg1.df, 
+  "CXCL13+IL17A vs. IgG1" = cxcl13.il17a.igg1.df,
+  "mTiRP vs. Atypical BC" = mTiRP.atypmbc.df,
+  "mTiRP vs. TLS-like BC" = mTiRP.tls.df,
+  "mTiRP vs. IgG1" = mTiRP.igg1.df,
+  "mTiRP vs. Th17" = mtirp.th17.df
+  )
+  
+regression.out
+```
+
+```{r}
+write_xlsx(regression.out, 
+           path = "out/tables/Supplemental Table 7 - Regression.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

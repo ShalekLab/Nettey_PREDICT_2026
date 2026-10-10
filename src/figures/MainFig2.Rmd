@@ -1,0 +1,363 @@
+---
+title: "Main Figure 2"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+
+In this notebook, I will create plots for main figure 2
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(ggpubr)
+
+celltypes <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+celltype.figure.order <- c("Colonic Epithelium", "Stroma", "Myeloid", "Plasma Cells", "B Cells", "T Cells, NK Cells, and ILCs")
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagGroup.comp <- list(c("FGID", "IBD"))
+diagGroupColVec <- c("FGID"=colFGID, "Ileal"=coliCD, "IBD"=colIBD)
+
+`%notin%` <- Negate(`%in%`)
+```
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+```{r}
+metadata <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+# Milo
+
+```{r}
+da_results.fgidibd.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_fgidibd.rds")
+da_results.fgidibd.df
+```
+
+```{r}
+da_results.fgidccd.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_fgidccd.rds")
+da_results.fgidccd.df
+```
+
+```{r}
+da_results.fgiduc.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_fgiduc.rds")
+da_results.fgiduc.df
+```
+
+```{r}
+da_results.ccduc.df <- readRDS("out/milo/combined/251017__predictCOL__CB_T0_FGIDCCDUC_ds_milo_k200_10x_ccduc.rds")
+da_results.ccduc.df
+```
+
+```{r}
+plotRange <- range(da_results.fgidibd.df$logFC, 
+                   da_results.fgidccd.df$logFC, 
+                   da_results.fgiduc.df$logFC,
+                   da_results.ccduc.df$logFC, 
+                   na.rm = T)
+plotMax <- abs(plotRange) %>% max %>% ceiling
+plotMin <- -plotMax
+c(plotMin, plotMax)
+```
+
+```{r, fig.height=7, fig.width=26}
+da_results.fgidibd.df %>% 
+  filter(cellstate_fraction >= 0.7) %>% 
+  add_count(cellstate) %>% 
+  filter(n >= 0) %>% 
+  droplevels %>% 
+  arrange(cellstate) %>% 
+  mutate(contrast = "←IBD     FGID→") %>% 
+  ggplot(aes(x = cellstate, y = logFC)) +
+  ggbeeswarm::geom_quasirandom(size = 1, aes(color = ifelse(SpatialFDR < 0.1, logFC, NA))) +
+  geom_hline(yintercept = 0, alpha = 0.25, lwd = 2) +
+  labs(x = NULL, y = "Log Fold Change") + 
+  guides(color = "none") +
+  scale_y_continuous(limits = c(plotMin,plotMax), breaks = seq(ceiling(plotMin/2)*2, floor(plotMax/2)*2, 2)) +
+  scale_color_gradient2(low = colFGID, mid = "gray90", high = colIBD, na.value = "gray75") +
+  facet_grid(contrast~celltype,  scales = "free_x", space = "free_x") +
+  coord_cartesian(clip = "off", expand = F) +
+  theme_bw(base_size = 22) +
+    theme(
+    plot.margin = unit(c(0.1,0.3,0.1,0.1), "cm"),
+    axis.title.y = element_text(size = 28, face = "bold"),
+    axis.text.x = element_text(size = 20, face = "bold", vjust = 0.5, hjust = 1, angle = 90),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.ticks.x = element_blank(),
+    strip.text.x = element_text(size = 24, face = "bold", colour = "black"),
+    strip.text.y = element_text(size = 30, face = "bold", colour = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 3), 
+    panel.spacing = unit(.5, "cm"),
+    panel.grid.minor.x = element_blank()
+    )
+```
+
+```{r}
+da_results.fgidccd.colors.df <- da_results.fgidccd.df %>%
+  filter(cellstate_fraction >= 0.7) %>% 
+  add_count(cellstate) %>% 
+  filter(n >= 0) %>% 
+  arrange(cellstate, logFC) %>% 
+  mutate(logFC.cut = cut(logFC, 200), .after = logFC) %>% 
+  mutate(contrast = "←cCD     FGID→") %>% relocate(contrast) %>% 
+  droplevels
+
+cuts.ccduc <- da_results.fgidccd.colors.df %>% pull(logFC) %>% cut(200) %>% levels
+colors.cduc <- c(colorRampPalette(c(colFGID,"gray90"))(100), colorRampPalette(c("gray90",colcCD))(100))
+names(colors.cduc) <- cuts.ccduc
+
+da_results.fgidccd.colors.df <- da_results.fgidccd.colors.df %>% 
+  mutate(logFC.color = ifelse(SpatialFDR < 0.1, 
+                              colors.cduc[logFC.cut],
+                              "gray75"
+                              ), .after = logFC.cut)
+da_results.fgidccd.colors.df
+```
+
+```{r}
+da_results.fgiduc.colors.df <- da_results.fgiduc.df %>%
+  filter(cellstate_fraction >= 0.7) %>% 
+  add_count(cellstate) %>% 
+  filter(n >= 0) %>% 
+  arrange(cellstate, logFC) %>% 
+  mutate(logFC.cut = cut(logFC, 200), .after = logFC) %>% 
+  mutate(contrast = "←UC     FGID→") %>% relocate(contrast) %>% 
+  droplevels
+
+cuts.fgiduc <- da_results.fgiduc.colors.df %>% pull(logFC) %>% cut(200) %>% levels
+colors.fgiduc <- c(colorRampPalette(c(colFGID,"gray90"))(100), colorRampPalette(c("gray90",colUC))(100))
+names(colors.fgiduc) <- cuts.fgiduc
+
+da_results.fgiduc.colors.df <- da_results.fgiduc.colors.df %>% 
+  mutate(logFC.color = ifelse(SpatialFDR < 0.1, 
+                              colors.fgiduc[logFC.cut],
+                              "gray75"
+                              ), .after = logFC.cut)
+da_results.fgiduc.colors.df
+```
+
+```{r}
+da_results.ccduc.colors.df <- da_results.ccduc.df %>%
+  filter(cellstate_fraction >= 0.7) %>% 
+  add_count(cellstate) %>% 
+  filter(n >= 0) %>% 
+  arrange(cellstate, logFC) %>% 
+  mutate(logFC.cut = cut(logFC, 200), .after = logFC) %>% 
+  mutate(contrast = "←UC     cCD→") %>% relocate(contrast) %>% 
+  droplevels
+
+cuts.ccduc <- da_results.ccduc.colors.df %>% pull(logFC) %>% cut(200) %>% levels
+colors.ccduc <- c(colorRampPalette(c(colcCD,"gray90"))(100), colorRampPalette(c("gray90",colUC))(100))
+names(colors.ccduc) <- cuts.ccduc
+
+da_results.ccduc.colors.df <- da_results.ccduc.colors.df %>% 
+  mutate(logFC.color = ifelse(SpatialFDR < 0.1, 
+                              unname(colors.ccduc[logFC.cut]),
+                              "gray75"
+                              ), .after = logFC.cut)
+da_results.ccduc.colors.df
+```
+
+```{r}
+da_results.fgidccduc.colors.df <- rbind(
+  da_results.fgidccd.colors.df,
+  da_results.fgiduc.colors.df,
+  da_results.ccduc.colors.df
+) %>% 
+  mutate(contrast = fct_relevel(contrast, c("←cCD     FGID→", "←UC     FGID→", "←UC     cCD→")))
+da_results.fgidccduc.colors.df
+```
+
+```{r, fig.height=16, fig.width=26}
+da_results.fgidccduc.colors.df %>% 
+  ggplot(aes(x = cellstate, y = logFC)) +
+  ggbeeswarm::geom_quasirandom(size = 1, color = da_results.fgidccduc.colors.df$logFC.color) +
+  geom_hline(yintercept = 0, alpha = 0.25, lwd = 2) +
+  labs(x = NULL, y = "Log Fold Change") + 
+  guides(color = "none") +
+  scale_y_continuous(limits = c(plotMin,plotMax), breaks = seq(ceiling(plotMin/2)*2, floor(plotMax/2)*2, 2)) +
+  facet_grid(contrast~celltype,  scales = "free_x", space = "free_x") +
+  coord_cartesian(clip = "off", expand = F) +
+  theme_bw(base_size = 22) +
+    theme(
+    plot.margin = unit(c(0.1,0.3,0.1,0.1), "cm"),
+    axis.title.y = element_text(size = 28, face = "bold"),
+    axis.text.x = element_text(size = 20, face = "bold", vjust = 0.5, hjust = 1, angle = 90),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.ticks.x = element_blank(),
+    strip.text.x = element_text(size = 24, face = "bold", colour = "black"),
+    strip.text.y = element_text(size = 30, face = "bold", colour = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 3), 
+    panel.spacing = unit(.5, "cm"),
+    panel.grid.minor.x = element_blank()
+    )
+```
+
+# IHC
+
+```{r}
+p28 <- readRDS("out/ihc/panimmune/panel28_long.rds")
+p28
+```
+
+```{r}
+p28.df.wide <- p28 %>% filter(!is.na(diagSub)) %>% 
+  mutate(diagGroup = case_when(
+    diagSub == "FGID" ~ "FGID",
+    diagSub == "iCD" ~ "Ileal",
+    diagSub %in% c("cCD", "UC") ~ "IBD"),
+    .after = diagSub
+  ) %>% 
+  mutate(diagGroup = fct_relevel(diagGroup, c("FGID", "Ileal", "IBD"))) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  mutate(diagSub = fct_relevel(diagSub, c("FGID", "iCD", "cCD", "UC"))) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  mutate(across(`CD20+`:`CD3+CD8-FOXP3-`, ~as.double(.)))
+
+p28.df.wide
+
+p28.df.long <- p28.df.wide %>% 
+  pivot_longer(`CD20+`:`CD3+CD8-FOXP3-`, names_to = "marker", values_to = "density") 
+
+p28.df.long
+```
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+```
+
+```{r}
+p20.df.wide <- p20 %>% filter(!is.na(diagSub)) %>% 
+  mutate(diagGroup = case_when(
+    diagSub == "FGID" ~ "FGID",
+    diagSub == "iCD" ~ "Ileal",
+    diagSub %in% c("cCD", "UC") ~ "IBD"),
+    .after = diagSub
+  ) %>% 
+  mutate(diagGroup = fct_relevel(diagGroup, c("FGID", "Ileal", "IBD"))) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  filter(str_ends(colon_site_ihc, "-2", negate = T))
+
+p20.df.wide
+
+p20.df.long <- p20.df.wide %>% 
+  pivot_longer(`BCMA+`:`NCR1+`, names_to = "marker", values_to = "density") 
+
+p20.df.long
+```
+
+
+```{r}
+p28p20.long <- rbind(p20.df.long, p28.df.long %>% mutate(diagnosis_p20 = NA, .after = diagnosis_p28))
+p28p20.long
+```
+
+```{r, fig.width=15, fig.height=2.5}
+p28p20.long %>% 
+  filter(diagSub != "iCD") %>%
+  filter(area == "WS") %>% 
+  filter(marker %in% c("CD11c+", "MPO+", "CD3+", "CD3+CD8-FOXP3+", "CD20+", "BCMA+")) %>% 
+  mutate(marker = fct_relevel(marker, c("CD11c+", "MPO+", "CD3+", "CD3+CD8-FOXP3+", "CD20+", "BCMA+"))) %>% 
+  group_by(diagGroup, marker) %>% 
+  mutate(mean = mean(density, na.rm = T)) %>% 
+  mutate(se = sd(density, na.rm = T)/sqrt(n())) %>%
+  ggplot(aes(x = diagGroup, y = density)) + 
+  geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.75, dotsize=1.75, aes(fill = diagGroup)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.4, linewidth=0.6) +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6, color = "black") +
+  scale_fill_manual(values = diagGroupColVec) +
+  scale_color_manual(values = diagGroupColVec) +
+  stat_compare_means(comparisons = diagGroup.comp, label = "p.format", vjust = 1.25, size = 5, tip.length = 0.05) +
+  facet_wrap(~marker, scales = "free", nrow = 1) +
+  guides(fill = "none") +
+  labs(
+    y = "Cell Count / mm2",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=18, fig.height=3}
+p28p20.long %>% 
+  filter(area == "WS") %>% 
+  filter(marker %in% c("CD11c+", "MPO+", "CD3+", "CD3+CD8-FOXP3+", "CD20+", "BCMA+")) %>% 
+  mutate(marker = fct_relevel(marker, c("CD11c+", "MPO+", "CD3+", "CD3+CD8-FOXP3+", "CD20+", "BCMA+"))) %>% 
+  group_by(diagSub, marker) %>% 
+  mutate(mean = mean(density, na.rm = T)) %>% 
+  mutate(se = sd(density, na.rm = T)/sqrt(n())) %>%
+  ggplot(aes(x = diagSub, y = density)) + 
+  geom_dotplot(binaxis = "y", stackdir = "center", stackratio = 0.75, dotsize=1.75, aes(fill = diagSub)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.5, linewidth=0.6) +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6, color = "black") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.25, size = 4.5, tip.length = 0.05) +
+  facet_wrap(~marker, scales = "free", nrow = 1) +
+  guides(fill = "none") +
+  labs(
+    y = "Cell Count / mm2",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

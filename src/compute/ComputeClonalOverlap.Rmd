@@ -1,0 +1,390 @@
+---
+title: "Compute Clonal Overlap"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make calculations for TCR clonal overlap analyses
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+library(divo)
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+```
+
+# Read Data
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+```
+
+```{r}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+```{r}
+seuobj.tnkilc <- AddMetaData(seuobj.tnkilc, tcrs %>% column_to_rownames("barcode"))
+seuobj.tnkilc@meta.data
+```
+
+# Prepare TCR Data
+
+```{r}
+tcrs.joined <- tcrs %>% 
+  filter(barcode %in% rownames(obs)) %>% 
+  left_join(., obs %>% 
+              select(biopsy, diagSub, antitnf_response, participant_id, timepoint, cellstate, cellsubtype, celltype, tgroup) %>% 
+              rownames_to_column("barcode"),
+                  by = "barcode") %>% 
+  relocate(barcode, biopsy, diagSub, antitnf_response, participant_id, timepoint, cellstate, cellsubtype, celltype, tgroup)
+
+tcrs.joined
+```
+
+```{r}
+tcrs.joined$celltype %>% table
+tcrs.joined$celltype %>% table %>% prop.table*100
+```
+
+About 99% of TCRs are in TNKILC group
+
+```{r}
+tcrs.formatted <- tcrs.joined %>% 
+  filter(celltype == "TNKILC") %>% 
+  mutate(length.TRA = nchar(cdr3.TRA)) %>% 
+  mutate(length.TRB = nchar(cdr3.TRB)) %>% 
+  group_by(biopsy, cdr3.TRA) %>% 
+  mutate(count.TRA = n()) %>% 
+  mutate(count.TRA = ifelse(is.na(cdr3.TRA), NA, count.TRA)) %>% 
+  group_by(biopsy, cdr3.TRB) %>% 
+  mutate(count.TRB = n()) %>% 
+  mutate(count.TRB = ifelse(is.na(cdr3.TRB), NA, count.TRB)) %>% 
+  mutate(cdr3.Paired = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  mutate(cdr3.Paired = ifelse(cdr3.Paired == "NA_NA", NA, cdr3.Paired)) %>% 
+  group_by(biopsy, cdr3.Paired) %>% 
+  mutate(count.Paired = n()) %>% 
+  mutate(count.Paired = ifelse(is.na(cdr3.TRA) | is.na(cdr3.TRB), NA, count.Paired)) %>% 
+  ungroup %>% 
+  arrange(biopsy, cellstate) %>% 
+  mutate(cdr3mr = ifelse(length.TRB >= 12 & length.TRB <= 17, substr(cdr3.TRB, 5, nchar(cdr3.TRB) - 6), NA)) %>% 
+  select(barcode, biopsy, diagSub, antitnf_response, participant_id, timepoint, cellstate, cellsubtype, tgroup, cdr3mr,
+         ends_with("Paired"), ends_with("TRA"), ends_with("TRB")) %>% 
+  rename(
+    cellstate = cellstate,
+    cellsubtype = cellsubtype,
+    TNKILC_Group = tgroup,
+  )
+
+tcrs.formatted
+```
+
+## Cell State Overlap
+
+```{r}
+shared.cdr3s.th1 <- tcrs.joined %>% 
+  filter(diagSub %in% c("cCD", "UC")) %>% 
+  filter(timepoint == "T0") %>% 
+  filter(cellstate %in% c("Th1", "Prlf. Teff")) %>% 
+  filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB)) %>% 
+  mutate(cdr3 = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  group_by(cdr3, biopsy) %>% 
+  distinct(cdr3, biopsy, cellstate, .keep_all = T) %>% 
+  mutate(cdr3.shared = ifelse(n() > 1, TRUE, FALSE)) %>% 
+  distinct(cdr3, biopsy, .keep_all = T) %>% 
+  filter(cdr3.shared) %>% 
+  pull(cdr3)
+
+shared.cdr3s.th1
+```
+
+
+
+```{r}
+shared.cdr3s.th17 <- tcrs.joined %>% 
+  filter(diagSub %in% c("cCD", "UC")) %>% 
+  filter(timepoint == "T0") %>% 
+  filter(cellstate %in% c("Th17", "Prlf. Teff")) %>% 
+  filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB)) %>% 
+  mutate(cdr3 = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  group_by(cdr3, biopsy) %>% 
+  distinct(cdr3, biopsy, cellstate, .keep_all = T) %>% 
+  mutate(cdr3.shared = ifelse(n() > 1, TRUE, FALSE)) %>% 
+  distinct(cdr3, biopsy, .keep_all = T) %>% 
+  filter(cdr3.shared) %>% 
+  pull(cdr3)
+
+shared.cdr3s.th17
+```
+
+```{r}
+shared.prlf.th.df <- tcrs.formatted %>% 
+  filter(timepoint == "T0" & diagSub %in% c("cCD", "UC") & !is.na(cdr3.TRA) & !is.na(cdr3.TRB) & cellstate == "Prlf. Teff") %>% 
+  select(barcode, biopsy, diagSub, antitnf_response, cellstate, cdr3.Paired) %>% 
+  mutate(Th1_Overlap = ifelse(cdr3.Paired %in% shared.cdr3s.th1, TRUE, FALSE)) %>% 
+  mutate(Th17_Overlap = ifelse(cdr3.Paired %in% shared.cdr3s.th17, TRUE, FALSE)) %>% 
+  arrange(diagSub, biopsy)
+
+shared.prlf.th.df
+```
+
+```{r}
+write_csv(shared.prlf.th.df, "out/tcr/clonaloverlap/ccduc_th1th17prlfteff_shared.csv")
+```
+
+```{r}
+shared.th1.network <- tcrs.joined %>% 
+  filter(diagSub %in% c("cCD", "UC")) %>% 
+  filter(timepoint == "T0") %>% 
+  filter(cellstate %in% c("Th1", "Prlf. Teff")) %>% 
+  mutate(cdr3 = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  filter(cdr3 %in% shared.cdr3s.th1) %>% 
+  add_count(cdr3, cellstate, name = "n") %>% 
+  select(barcode, biopsy, diagSub, cdr3, cellstate, n) %>% 
+  distinct(biopsy, barcode, cellstate, .keep_all = T) %>% 
+  arrange(diagSub, biopsy, cdr3, cellstate) %>% 
+  rename(cdr3.Paired = cdr3, CellState = cellstate, count = n) %>% 
+  pivot_wider(names_from = CellState, values_from = c(count, barcode),
+              values_fn = list(
+                "count" = unique
+              )) %>% 
+  rowwise %>%
+  mutate(
+    across(
+      .cols = starts_with("barcode"),
+      .fns = ~paste(., collapse = "___")
+    )
+  ) %>% 
+  ungroup
+
+shared.th1.network
+```
+
+```{r}
+shared.th17.network <- tcrs.joined %>% 
+  filter(diagSub %in% c("cCD", "UC")) %>% 
+  filter(timepoint == "T0") %>% 
+  filter(cellstate %in% c("Th17", "Prlf. Teff")) %>% 
+  mutate(cdr3 = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  filter(cdr3 %in% shared.cdr3s.th17) %>% 
+  add_count(cdr3, cellstate, name = "n") %>% 
+  select(barcode, biopsy, diagSub, cdr3, cellstate, n) %>% 
+  distinct(biopsy, barcode, cellstate, .keep_all = T) %>% 
+  arrange(diagSub, biopsy, cdr3, cellstate) %>% 
+  rename(cdr3.Paired = cdr3, CellState = cellstate, count = n) %>% 
+  pivot_wider(names_from = CellState, values_from = c(count, barcode),
+              values_fn = list(
+                "count" = unique
+              )) %>% 
+  rowwise %>%
+  mutate(
+    across(
+      .cols = starts_with("barcode"),
+      .fns = ~paste(., collapse = "___")
+    )
+  ) %>% 
+  ungroup
+
+shared.th17.network
+```
+
+```{r}
+write_csv(shared.th1.network, "out/tcr/clonaloverlap/ccduc_th1prlfteff_network.csv")
+write_csv(shared.th17.network, "out/tcr/clonaloverlap/ccduc_th17prlfteff_network.csv")
+```
+
+# CD8+ Th17
+
+```{r}
+th17.barcodes <- seuobj.tnkilc@meta.data %>% 
+  filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB) & timepoint == "T0" & diagSub %in% c("cCD", "UC") & cellstate == "Th17") %>% 
+  rownames
+
+th17.barcodes %>% length
+```
+
+```{r}
+seuobj.th17 <- subset(seuobj.tnkilc, cells = th17.barcodes)
+seuobj.th17
+```
+
+```{r}
+exp.cd8a <- FetchData(seuobj.th17, "CD8A") %>% 
+  rownames_to_column("barcode")
+exp.cd8a
+```
+
+```{r}
+cd8.th17.df <- tcrs.formatted %>% 
+  filter(timepoint == "T0" & diagSub %in% c("cCD", "UC") & !is.na(cdr3.TRA) & !is.na(cdr3.TRB) & cellstate == "Th17") %>% 
+  select(barcode, biopsy, diagSub, antitnf_response, cellstate, cdr3.Paired) %>% 
+  mutate(`Prlf. Teff_Overlap` = ifelse(cdr3.Paired %in% shared.cdr3s.th17, TRUE, FALSE)) %>% 
+  left_join(exp.cd8a, by = "barcode") %>% 
+  rename(CD8A_LogExp = CD8A) %>% 
+  mutate(CD8A = ifelse(CD8A_LogExp > 0, "CD8A+", "CD8A-")) %>% 
+  mutate(CD8A = fct_relevel(CD8A, c("CD8A-", "CD8A+"))) %>% 
+  arrange(desc(`Prlf. Teff_Overlap`), diagSub, desc(CD8A_LogExp), biopsy)
+
+cd8.th17.df
+```
+
+```{r}
+write_csv(cd8.th17.df, "out/tcr/clonaloverlap/ccduc_cd8th17_prlfteffoverlap.csv")
+```
+
+```{r}
+tcrs.formatted.cd8 <- tcrs.formatted %>% 
+  left_join(exp.cd8a, by = "barcode") %>% 
+  rename(CD8A_LogExp = CD8A) %>% 
+  mutate(CD8A = ifelse(CD8A_LogExp > 0, "CD8A+", "CD8A-")) %>% 
+  mutate(CD8A = fct_relevel(CD8A, c("CD8A-", "CD8A+"))) %>% 
+  relocate(CD8A_LogExp, CD8A, .after = cellstate) %>% 
+  mutate(cellsubstate = case_when(
+    cellstate == "Th1" ~ "Th1",
+    cellstate == "Prlf. Teff" ~ "Prlf. Teff",
+    cellstate == "Th17" & CD8A == "CD8A-" ~ "CD8A- Th17",
+    cellstate == "Th17" & CD8A == "CD8A+" ~ "CD8A+ Th17"
+  ), .after = cellstate)
+```
+
+```{r}
+tcrs.formatted.cd8 %>% 
+  filter(!is.na(cellsubstate)) %>% 
+  filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB)) %>% 
+  filter(timepoint == "T0" & diagSub == "cCD") %>% 
+  group_by(cdr3.Paired, cellsubstate) %>% 
+  dplyr::count() %>% 
+  ungroup %>% 
+  pivot_wider(id_cols = "cdr3.Paired", names_from = cellsubstate, values_from = n, values_fill = 0) %>% 
+  column_to_rownames("cdr3.Paired") %>% 
+  mh(PlugIn = T) %>% 
+  .$PlugIn -> ccd.morisita.cd8
+
+ccd.morisita.cd8
+```
+
+```{r}
+ccd.rows <- rownames(ccd.morisita.cd8)
+ccd.cols <- colnames(ccd.morisita.cd8)
+ccd.morisita.cd8.df <- data.frame(cellsubstate1 = character(), cellsubstate2 = character(), morisita = numeric())
+for (i in 1:nrow(ccd.morisita.cd8)){
+  for (j in 1:ncol(ccd.morisita.cd8)){
+    if (i > j) {
+      ccd.morisita.cd8.df <- rbind(
+        ccd.morisita.cd8.df,
+        data.frame(cellsubstate1 = ccd.rows[i], cellsubstate2 = ccd.cols[j], morisita = ccd.morisita.cd8[i,j])
+      )
+    }
+  }
+} 
+
+ccd.morisita.cd8.df <- rbind(
+  ccd.morisita.cd8.df,
+  data.frame(cellsubstate1 = ccd.morisita.cd8.df$cellsubstate2, cellsubstate2 = ccd.morisita.cd8.df$cellsubstate1, morisita = ccd.morisita.cd8.df$morisita)
+) %>%  
+  mutate(cellsubstate1 = fct_relevel(cellsubstate1, levels(tcrs.formatted$cellstate))) %>% 
+  mutate(cellsubstate2 = fct_relevel(cellsubstate2, levels(tcrs.formatted$cellstate))) %>% 
+  arrange(-morisita)
+
+ccd.morisita.cd8.df
+```
+
+```{r}
+tcrs.formatted.cd8 %>% 
+  filter(!is.na(cellsubstate)) %>% 
+  filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB)) %>% 
+  filter(timepoint == "T0" & diagSub == "UC") %>% 
+  group_by(cdr3.Paired, cellsubstate) %>% 
+  dplyr::count() %>% 
+  ungroup %>% 
+  pivot_wider(id_cols = "cdr3.Paired", names_from = cellsubstate, values_from = n, values_fill = 0) %>% 
+  column_to_rownames("cdr3.Paired") %>% 
+  mh(PlugIn = T) %>% 
+  .$PlugIn -> uc.morisita.cd8
+
+uc.morisita.cd8
+```
+
+```{r}
+uc.rows <- rownames(uc.morisita.cd8)
+uc.cols <- colnames(uc.morisita.cd8)
+uc.morisita.cd8.df <- data.frame(cellsubstate1 = character(), cellsubstate2 = character(), morisita = numeric())
+for (i in 1:nrow(uc.morisita.cd8)){
+  for (j in 1:ncol(uc.morisita.cd8)){
+    if (i > j) {
+      uc.morisita.cd8.df <- rbind(
+        uc.morisita.cd8.df,
+        data.frame(cellsubstate1 = uc.rows[i], cellsubstate2 = uc.cols[j], morisita = uc.morisita.cd8[i,j])
+      )
+    }
+  }
+} 
+
+uc.morisita.cd8.df <- rbind(
+  uc.morisita.cd8.df,
+  data.frame(cellsubstate1 = uc.morisita.cd8.df$cellsubstate2, cellsubstate2 = uc.morisita.cd8.df$cellsubstate1, morisita = uc.morisita.cd8.df$morisita)
+) %>%  
+  mutate(cellsubstate1 = fct_relevel(cellsubstate1, levels(tcrs.formatted$cellstate))) %>% 
+  mutate(cellsubstate2 = fct_relevel(cellsubstate2, levels(tcrs.formatted$cellstate))) %>% 
+  arrange(-morisita)
+
+uc.morisita.cd8.df
+```
+
+
+```{r}
+ccduc.morisita.cd8.df <- rbind(
+  ccd.morisita.cd8.df %>% mutate(diagSub = "cCD"),
+  uc.morisita.cd8.df %>% mutate(diagSub = "UC")
+)
+
+ccduc.morisita.cd8.df
+```
+
+```{r}
+separator <- "—"
+
+plot.pairs <- c(
+  paste("Th1", "Prlf. Teff", sep = separator),
+  paste("CD8A- Th17", "Prlf. Teff", sep = separator),
+  paste("CD8A+ Th17", "Prlf. Teff", sep = separator)
+)
+
+ccduc.morisita.cd8.df.out <- ccduc.morisita.cd8.df %>% 
+  mutate(cellsubtype_paired = paste(cellsubstate1, cellsubstate2, sep = separator), .after = cellsubstate2) %>% 
+  filter(cellsubtype_paired %in% plot.pairs) %>% 
+  arrange(cellsubstate1)
+
+ccduc.morisita.cd8.df.out
+```
+
+```{r}
+write_csv(ccduc.morisita.cd8.df.out, "out/tcr/clonaloverlap/ccduc_cd8th17_morisita.csv")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

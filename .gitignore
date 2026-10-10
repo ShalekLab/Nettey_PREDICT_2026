@@ -48,3 +48,9 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Metadata files
+data/metadata/
+
+# R analysis HTML files
+*.nb.html

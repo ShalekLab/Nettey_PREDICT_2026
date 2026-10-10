@@ -1,0 +1,394 @@
+---
+title: "Supplemental Figure 5"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 5
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggrepel)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colCellgroups <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+names(colCellgroups) <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+```
+
+# Differential Expression
+
+```{r}
+de.ccduc.ibdassoc.df <- read_csv("out/deseq2/DE__UCvscCD_IBDAssoc.csv")
+de.ccduc.ibdassoc.df
+```
+
+```{r}
+de.ccduc.ibdassoc.epi.df <- de.ccduc.ibdassoc.df %>% filter(annotation == "IBDAssocEpi")
+de.ccduc.ibdassoc.epi.df
+
+de.ccduc.ibdassoc.fibro.df <- de.ccduc.ibdassoc.df %>% filter(annotation == "IBDAssocFibro")
+de.ccduc.ibdassoc.fibro.df
+
+de.ccduc.ibdassoc.monomac.df <- de.ccduc.ibdassoc.df %>% filter(annotation == "IBDAssocMonoMac")
+de.ccduc.ibdassoc.monomac.df
+```
+
+```{r, fig.width=8.5, fig.height=7.5}
+de.ccduc.ibdassoc.epi.range <- de.ccduc.ibdassoc.epi.df$log2FoldChange %>% range %>% abs %>% max %>% ceiling
+de.ccduc.ibdassoc.epi.range <- c(-de.ccduc.ibdassoc.epi.range, de.ccduc.ibdassoc.epi.range)
+
+ggplot(de.ccduc.ibdassoc.epi.df %>% 
+         mutate(labelname = ifelse(padj <= 0.01, gene, NA)) %>% 
+         mutate(diagSub = ifelse(sign(stat) == 1, "UC", "cCD")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, diagSub, "Not DE")) %>% 
+         mutate(diagSub = fct_relevel(diagSub, c("cCD", "UC"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed-1,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(aes(size = -log10(padj)), color = "black", seed = thisseed-1,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = diagSubColVec, limits = c("cCD", "UC")) +
+  scale_fill_manual(values = c(diagSubColVec, "Not DE" = "gray50"), limits = c("cCD", "Not DE", "UC"), 
+                    labels = c("cCD" = "Enriched in cCD", 
+                               "Not DE" = "Not DE", 
+                               "UC" = "Enriched in UC")) +
+  scale_size_continuous(range = c(1,4)) +
+  coord_cartesian(xlim = de.ccduc.ibdassoc.epi.range) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)",
+    title = "IBD-Associated Colonic Epithelial Cells"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5, color=colCellgroups["ColEpi"]),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 20, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"), 
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r, fig.width=8.5, fig.height=7.5}
+de.ccduc.ibdassoc.fibro.range <- de.ccduc.ibdassoc.fibro.df$log2FoldChange %>% range %>% abs %>% max %>% ceiling
+de.ccduc.ibdassoc.fibro.range <- c(-de.ccduc.ibdassoc.fibro.range, de.ccduc.ibdassoc.fibro.range)
+
+ggplot(de.ccduc.ibdassoc.fibro.df %>% 
+         mutate(labelname = ifelse(padj <= 1e-4, gene, NA)) %>% 
+         mutate(diagSub = ifelse(sign(stat) == 1, "UC", "cCD")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, diagSub, "Not DE")) %>% 
+         mutate(diagSub = fct_relevel(diagSub, c("cCD", "UC"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(aes(size = -log10(padj)), color = "black", seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = diagSubColVec, limits = c("cCD", "UC")) +
+  scale_fill_manual(values = c(diagSubColVec, "Not DE" = "gray50"), limits = c("cCD", "Not DE", "UC"), 
+                    labels = c("cCD" = "Enriched in cCD", 
+                               "Not DE" = "Not DE", 
+                               "UC" = "Enriched in UC")) +
+  scale_size_continuous(range = c(1,4)) +
+  coord_cartesian(xlim = de.ccduc.ibdassoc.fibro.range) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)",
+    title = "IBD-Associated Fibroblasts"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5, color=colCellgroups["Stroma"]),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 20, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"), 
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r, fig.width=8.5, fig.height=7.5}
+de.ccduc.ibdassoc.monomac.range <- de.ccduc.ibdassoc.monomac.df$log2FoldChange %>% range %>% abs %>% max %>% ceiling
+de.ccduc.ibdassoc.monomac.range <- c(-de.ccduc.ibdassoc.monomac.range, de.ccduc.ibdassoc.monomac.range)
+
+ggplot(de.ccduc.ibdassoc.monomac.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(diagSub = ifelse(sign(stat) == 1, "UC", "cCD")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, diagSub, "Not DE")) %>% 
+         mutate(diagSub = fct_relevel(diagSub, c("cCD", "UC"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(aes(size = -log10(padj)), color = "black", seed = thisseed,
+                   fontface = "bold", max.overlaps = 75, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = diagSubColVec, limits = c("cCD", "UC")) +
+  scale_fill_manual(values = c(diagSubColVec, "Not DE" = "gray50"), limits = c("cCD", "Not DE", "UC"), 
+                    labels = c("cCD" = "Enriched in cCD", 
+                               "Not DE" = "Not DE", 
+                               "UC" = "Enriched in UC")) +
+  scale_size_continuous(range = c(1,4)) +
+  coord_cartesian(xlim = de.ccduc.ibdassoc.monomac.range) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)",
+    title = "IBD-Associated Monocytes and Macrophages"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5, color=colCellgroups["Myeloid"]),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 20, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"), 
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+# GSEA
+
+```{r}
+gsea.ccduc.ibdassoc.df <- read_csv("out/gsea/GSEA__UCvscCD_IBDAssoc.csv")
+gsea.ccduc.ibdassoc.df
+```
+
+```{r}
+gsea.ccduc.ibdassoc.epi.df <- gsea.ccduc.ibdassoc.df %>% filter(annotation == "IBDAssocEpi")
+gsea.ccduc.ibdassoc.epi.df
+
+gsea.ccduc.ibdassoc.fibro.df <- gsea.ccduc.ibdassoc.df %>% filter(annotation == "IBDAssocFibro")
+gsea.ccduc.ibdassoc.fibro.df
+
+gsea.ccduc.ibdassoc.monomac.df <- gsea.ccduc.ibdassoc.df %>% filter(annotation == "IBDAssocMonoMac")
+gsea.ccduc.ibdassoc.monomac.df
+```
+
+```{r, fig.height=4, fig.width=9}
+gsea.ccduc.ibdassoc.epi.df %>% 
+  filter(NES < 0) %>% 
+  filter(padj <= 0.05) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  mutate(pathway = str_wrap(pathway, width = 35)) %>% 
+  mutate(NES = -NES) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colcCD, limits = c(1,13), breaks = c(1,4,7,10,13)) +
+  coord_cartesian(xlim = c(1,3)) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5, 3)) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in cCD\nIBD-Associated Colonic Epithelial Cells"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold", color = colCellgroups["ColEpi"]),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r, fig.height=4, fig.width=9}
+gsea.ccduc.ibdassoc.epi.df %>% 
+  filter(NES > 0) %>% 
+  filter(padj <= 0.05) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  mutate(pathway = str_wrap(pathway, width = 35)) %>% 
+  # mutate(NES = -NES) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colUC, limits = c(1,13), breaks = c(1,4,7,10, 13)) +
+  coord_cartesian(xlim = c(1,3)) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5, 3)) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in UC\nIBD-Associated Colonic Epithelial Cells"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold", color = colCellgroups["ColEpi"]),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r, fig.height=4, fig.width=9}
+gsea.ccduc.ibdassoc.fibro.df %>% 
+  filter(NES < 0) %>% 
+  filter(padj <= 0.05) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  mutate(pathway = str_wrap(pathway, width = 35)) %>% 
+  mutate(NES = -NES) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colcCD, limits = c(1,13), breaks = c(1,4,7,10,13)) +
+  coord_cartesian(xlim = c(1,3)) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5, 3)) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in cCD\nIBD-Associated Fibroblasts"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold", color = colCellgroups["Stroma"]),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r, fig.height=4, fig.width=9}
+gsea.ccduc.ibdassoc.fibro.df %>% 
+  filter(NES > 0) %>% 
+  filter(padj <= 0.05) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  mutate(pathway = str_wrap(pathway, width = 35)) %>% 
+  # mutate(NES = -NES) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colUC, limits = c(1,13), breaks = c(1,4,7,10, 13)) +
+  coord_cartesian(xlim = c(1,3)) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5, 3)) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in UC\nIBD-Associated Fibroblasts"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold", color = colCellgroups["Stroma"]),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r, fig.height=4, fig.width=9}
+gsea.ccduc.ibdassoc.monomac.df %>% 
+  filter(NES < 0) %>% 
+  filter(padj <= 0.05) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  mutate(pathway = str_wrap(pathway, width = 25)) %>% 
+  mutate(NES = -NES) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colcCD, limits = c(1,7), breaks = c(1,3,5,7)) +
+  coord_cartesian(xlim = c(1,3)) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5, 3)) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in cCD\nIBD-Associated Monocytes and Macrophages"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold", color = colCellgroups["Myeloid"]),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r, fig.height=4, fig.width=9}
+gsea.ccduc.ibdassoc.monomac.df %>% 
+  filter(NES > 0) %>% 
+  filter(padj <= 0.05) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  mutate(pathway = str_wrap(pathway, width = 25)) %>% 
+  # mutate(NES = -NES) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_gradient(low = "gray80", high = colUC, limits = c(1,7), breaks = c(1,3,5,7)) +
+  coord_cartesian(xlim = c(1,3)) +
+  scale_x_continuous(breaks = c(1, 1.5, 2, 2.5, 3)) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+    title="Reactome Pathways Enriched in UC\nIBD-Associated Monocytes and Macrophages"
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold", color = colCellgroups["Myeloid"]),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

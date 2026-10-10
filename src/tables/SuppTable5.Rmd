@@ -1,0 +1,453 @@
+---
+title: "Supplemental Table 5 - TCR Phenotypes and Overlap"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile TCR data, including TCR phenotypes and clonal overlap, into a single Excel file.
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(writexl)
+
+thisseed <- 231103
+
+alakazamfeatures <- c("Hydrophobicity", "Size", "Aliphatic", "Polarity")
+
+source("../functions/ComparisonPlottingFxns.R")
+
+`%notin%` <- Negate(`%in%`)
+```
+
+# Clonal Overlap
+
+## Shared Prlf. Eff 
+
+```{r}
+shared.prlf.th.df <- read_csv("out/tcr/clonaloverlap/ccduc_th1th17prlfteff_shared.csv")
+shared.prlf.th.df
+```
+
+```{r}
+shared.th1.network <- read_csv("out/tcr/clonaloverlap/ccduc_th1prlfteff_network.csv")
+shared.th1.network
+```
+
+```{r}
+shared.th17.network <- read_csv("out/tcr/clonaloverlap/ccduc_th17prlfteff_network.csv")
+shared.th17.network
+```
+
+## CD8 Th17
+
+```{r}
+cd8.th17.df <- read_csv("out/tcr/clonaloverlap/ccduc_cd8th17_prlfteffoverlap.csv")
+cd8.th17.df
+```
+
+## Morisita Index
+
+```{r}
+ccduc.morisita <- read_csv("out/tcr/clonaloverlap/ccduc_cd8th17_morisita.csv")
+ccduc.morisita
+```
+
+# TCR Data Table
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+```{r}
+<<<<<<< HEAD
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+=======
+metadata <- readRDS("data/metadata/231226__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+## Panel 1
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+>>>>>>> origin/main
+```
+
+```{r}
+tcrs.joined <- tcrs %>% 
+  filter(barcode %in% rownames(obs)) %>% 
+  left_join(., obs %>% 
+              select(biopsy, diagSub, antitnf_response, participant_id, timepoint, cellstate, cellsubtype, celltype, tgroup) %>% 
+              rownames_to_column("barcode"),
+                  by = "barcode") %>% 
+  relocate(barcode, biopsy, diagSub, antitnf_response, participant_id, timepoint, cellstate, cellsubtype, celltype, tgroup)
+
+tcrs.joined
+```
+
+```{r}
+tcrs.formatted <- tcrs.joined %>% 
+  filter(celltype == "TNKILC") %>% 
+  mutate(length.TRA = nchar(cdr3.TRA)) %>% 
+  mutate(length.TRB = nchar(cdr3.TRB)) %>% 
+  group_by(biopsy, cdr3.TRA) %>% 
+  mutate(count.TRA = n()) %>% 
+  mutate(count.TRA = ifelse(is.na(cdr3.TRA), NA, count.TRA)) %>% 
+  group_by(biopsy, cdr3.TRB) %>% 
+  mutate(count.TRB = n()) %>% 
+  mutate(count.TRB = ifelse(is.na(cdr3.TRB), NA, count.TRB)) %>% 
+  mutate(cdr3.Paired = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% 
+  mutate(cdr3.Paired = ifelse(cdr3.Paired == "NA_NA", NA, cdr3.Paired)) %>% 
+  group_by(biopsy, cdr3.Paired) %>% 
+  mutate(count.Paired = n()) %>% 
+  mutate(count.Paired = ifelse(is.na(cdr3.TRA) | is.na(cdr3.TRB), NA, count.Paired)) %>% 
+  ungroup %>% 
+  arrange(biopsy, cellstate) %>% 
+  mutate(cdr3mr = ifelse(length.TRB >= 12 & length.TRB <= 17, substr(cdr3.TRB, 5, nchar(cdr3.TRB) - 6), NA)) %>% 
+  select(barcode, biopsy, diagSub, antitnf_response, participant_id, timepoint, cellstate, cellsubtype, tgroup, cdr3mr,
+         ends_with("Paired"), ends_with("TRA"), ends_with("TRB")) %>% 
+  dplyr::rename(
+    CellState = cellstate,
+    CellSubtype = cellsubtype,
+    TNKILC_Group = tgroup,
+  )
+
+tcrs.formatted
+```
+
+<<<<<<< HEAD
+# Phenotypes
+
+## Alakazam
+=======
+## Panel 2
+>>>>>>> origin/main
+
+```{r}
+alakazam <- read_csv("out/tcr/alakazam/cdr3b_mr_alakazam_scored_241120.csv")
+alakazam
+```
+
+```{r}
+tcrs.alakazam <- tcrs.formatted %>% 
+  left_join(alakazam, by = "cdr3mr")
+
+tcrs.alakazam <- tcrs.alakazam %>% 
+  filter(!is.na(cdr3mr)) %>%
+  mutate(
+    across(
+      .cols = c(cdr3mr_aa_gravy, cdr3mr_aa_bulk, cdr3mr_aa_aliphatic, cdr3mr_aa_polarity),
+      .fns = ~(ifelse(!is.na(cdr3mr), (. - mean(., na.rm = T))/sd(., na.rm = T), NA)),
+      .names = "{.col}.norm"
+    )
+  ) %>%
+  dplyr::rename(Hydrophobicity = cdr3mr_aa_gravy.norm, Size = cdr3mr_aa_bulk.norm, Aliphatic = cdr3mr_aa_aliphatic.norm, Polarity = cdr3mr_aa_polarity.norm) %>% 
+  select(cdr3mr, Hydrophobicity, Size, Aliphatic, Polarity) %>% 
+  distinct(cdr3mr, .keep_all = T) %>% 
+  left_join(tcrs.alakazam, ., by = "cdr3mr")
+
+tcrs.alakazam %>% filter(!is.na(cdr3.TRB))
+```
+
+```{r}
+alakazam.out <- PlotBoxplotsFeatures(
+  tcrs.alakazam %>% filter(timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = c("Hydrophobicity", "Size", "Aliphatic", "Polarity"),
+  filterCol = "TNKILC_Group",
+  filterVal = "CD4T",
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, TNKILC_Group, denominator.freq, meanVal, featureVar) %>% 
+  dplyr::rename(group = TNKILC_Group, group_count = denominator.freq) %>% 
+  pivot_wider(id_cols = c(biopsy:group_count), names_from = featureVar, values_from = meanVal) %>% 
+  arrange(diagSub, antitnf_response, biopsy)
+
+alakazam.out
+```
+
+## mTiRP
+
+```{r}
+tirp <- read_csv("out/tcr/tirp/241120_predictCOL_tirp.csv")
+tirp
+```
+
+```{r}
+tcrs.tirp <- tcrs.formatted %>% 
+  left_join(., tirp %>% distinct(cdr3, .keep_all = T), by = c("cdr3.TRB" = "cdr3"))
+
+tcrs.tirp
+```
+
+Confirm my calculation of middle-region and TiRP's are the same
+
+```{r}
+tcrs.tirp %>% select(cdr3mr, cdr3MR)
+tcrs.tirp %>% filter(!is.na(cdr3mr)) %>% filter(cdr3mr != cdr3MR)
+tcrs.tirp %>% filter(!is.na(cdr3MR)) %>% filter(cdr3mr != cdr3MR)
+```
+
+```{r}
+obs.tirp <- left_join(
+  obs %>% rownames_to_column("barcode"),
+  tcrs.tirp %>% select(barcode, cdr3.TRA, cdr3.TRB, cdr3.Paired, cdr3MR, mTiRP, count.Paired),
+  by = "barcode"
+)
+
+obs.tirp
+```
+
+
+```{r}
+tirp.cd4 <- PlotBoxplotsFeatures(
+  obs.tirp %>% filter( timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "tgroup",
+  filterCol = "tgroup",
+  filterVal = "CD4T",
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, tgroup, denominator.freq, meanVal) %>% 
+  dplyr::rename(mTiRP = meanVal, group = tgroup, group_count = denominator.freq) %>% 
+  arrange(group, diagSub, desc(mTiRP))
+
+tirp.cd4
+```
+
+
+```{r}
+tirp.celltypes <- PlotBoxplotsFeatures(
+  obs.tirp %>% filter( timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper", "Tfh", "Treg"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+) %>% 
+  select(biopsy, diagSub, antitnf_response, timepoint, cellsubtype, denominator.freq, meanVal) %>% 
+  dplyr::rename(mTiRP = meanVal, group = cellsubtype, group_count = denominator.freq) %>% 
+  arrange(group, diagSub, desc(mTiRP))
+
+tirp.celltypes
+```
+
+```{r}
+tirp.tfh <- PlotBoxplotsFeatures(
+  obs.tirp %>% filter(timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Lo Tfh", "PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+)  %>%
+  select(biopsy, diagSub, antitnf_response, timepoint, cellstate, denominator.freq, meanVal) %>% 
+  dplyr::rename(mTiRP = meanVal, group = cellstate, group_count = denominator.freq) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint, desc(mTiRP))
+
+tirp.tfh
+```
+
+```{r}
+tirp.uc <- PlotBoxplotsFeatures(
+  obs.tirp %>% filter(diagSub == "UC" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+)   %>%
+  select(biopsy, diagSub, antitnf_response, timepoint, cellstate, denominator.freq, meanVal) %>% 
+  dplyr::rename(mTiRP = meanVal, group = cellstate, group_count = denominator.freq) %>% 
+  arrange(group, diagSub, antitnf_response, timepoint, desc(mTiRP))
+
+tirp.uc
+```
+
+```{r}
+selectedparticipants.hla <- c("001-036", "001-038")
+
+tirp.hla <- PlotBoxplotsFeatures(
+  obs.tirp %>% filter(diagSub == "UC" & timepoint == "T0" & !is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants.hla, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants.hla)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants.hla, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  select(biopsy, diagSub, DRB1, alleleNum, antitnf_response, timepoint, cellstate, denominator.freq, meanVal) %>% 
+  dplyr::rename(
+    mTiRP = meanVal, 
+    group = cellstate,
+    group_count = denominator.freq,
+    `HLA-DRB1` = DRB1,
+    Num_1501_Alleles = alleleNum,
+  ) %>% 
+  relocate(biopsy, diagSub, `HLA-DRB1`, Num_1501_Alleles,
+           antitnf_response, timepoint,group, group_count, mTiRP) %>% 
+  arrange(group, `HLA-DRB1`, diagSub, antitnf_response, biopsy)
+
+tirp.hla
+```
+
+```{r}
+expansion.out <- obs.tirp %>% 
+  mutate(expanded.paired = case_when(
+    count.Paired > 1 ~ "Expanded",
+    count.Paired == 1 ~ "Singlet",
+    is.na(count.Paired) ~ NA
+  )) %>% 
+  filter(cellstate == "PD1Hi Tfh") %>% 
+  filter(timepoint == "T0") %>% 
+  filter(!is.na(count.Paired) & !is.na(cdr3MR)) %>% 
+  mutate(expanded.paired = fct_relevel(expanded.paired, c("Singlet", "Expanded"))) %>% 
+  group_by(diagSub, expanded.paired, cellstate, .drop = FALSE) %>% 
+  mutate(mean = mean(mTiRP, na.rm = T)) %>% 
+  mutate(se = sd(mTiRP, na.rm = T)/sqrt(n())) %>%
+  ungroup %>% 
+  select(barcode, biopsy, diagSub, antitnf_response, timepoint, cdr3.Paired, count.Paired, expanded.paired, cdr3MR, mTiRP) %>% 
+  dplyr::rename(expansion_group = expanded.paired) %>% 
+  arrange(barcode)
+
+expansion.out
+```
+
+```{r}
+tirp.out <- rbind(
+  tirp.cd4,
+  tirp.celltypes,
+  tirp.tfh,
+  tirp.uc
+) %>% distinct
+
+tirp.out
+```
+
+
+# Combine Lists
+
+```{r}
+tcr.df.out <- tcrs.formatted %>% 
+  dplyr::rename(cdr3MR = cdr3mr)
+```
+
+
+```{r}
+freq.out <- list(
+  "Key" = data.frame(),
+  "Panel 1" = p20.df.out,
+  "Panel 2" = p28.df.out,
+  "TLS" = tls.out,
+  "ColEpi" = freq.colepi,
+  "Stroma" = freq.stroma,
+  "Myeloid" = freq.myeloid,
+  "Plasma" = freq.plasma,
+  "BCell" = freq.bcell,
+  "TNKILC" = freq.tnkilc,
+  "cCD PrevsPost" = freq.prepost,
+  "Tfh" = freq.tfh,
+  "UC HLA" = hla.out
+)
+  
+tcr.df.out
+
+```
+
+
+```{r}
+tcr.out <- list(
+  "Key" = data.frame(),
+  "TCRs" = tcr.df.out,
+  "Alakazam" = alakazam.out,
+  "mTiRP" = tirp.out,
+  "mTiRP Expansion" = expansion.out,
+  "mTiRP UC HLA" = tirp.hla,
+  "Prlf. Overlap" = shared.prlf.th.df,
+  "Th1-Prlf Matches" = shared.th1.network,
+  "Th17-Prlf Matches" = shared.th17.network,
+  "CD8+ Th17 Overlap"= cd8.th17.df,
+  "Prlf. Morisita" = ccduc.morisita
+)
+
+tcr.out
+```
+
+
+```{r}
+write_xlsx(tcr.out, 
+           path = "out/tables/Supplemental Table 5 - TCRs.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,580 @@
+---
+title: "Supplemental Table 1 - Participants and Samples"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+This notebook will collate cell frequency data into a table-like structure to create the table detailing the cellular census of this data.
+
+```{r}
+library(scales)
+library(tidyverse)
+library(writexl)
+```
+
+
+# Participant Details
+
+```{r}
+metadata.gex <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata.gex
+```
+
+```{r}
+metadata.vdj <- readRDS("data/metadata/241120__predictCOL_metadata_COL_VDJ.rds")
+metadata.vdj
+```
+
+```{r}
+metadata.col <- rbind(
+  metadata.gex,
+  metadata.vdj
+)
+metadata.col
+```
+
+
+```{r}
+metadata.predict <- read_csv("data/metadata/metadata_predict_5p_metadata_20250528.csv")
+metadata.predict
+```
+
+```{r}
+metadata.demo.score <- metadata.predict %>% 
+  filter(timepoint == "T0" & participant_id %in% metadata.gex$participant_id & tissue != "BLD") %>% 
+  distinct(participant_id, age, sex, race, ethnicity, score_type, severity_score, weighted_severity_score, severity_score_date, severity_score_range, weighted_score_range) %>% 
+  mutate(weighted_score_range = ifelse(weighted_score_range == "NM",
+                                       weighted_score_range, 
+                                       str_to_title(weighted_score_range)))
+
+metadata.demo.score
+```
+
+```{r}
+# ensure correct age and gender from corrected spreadsheet
+metadata.col.demo.score <- metadata.col %>% 
+  select(-age, -gender, -score_type, -matches("severity")) %>% 
+  left_join(metadata.demo.score, by = "participant_id") %>% 
+  mutate(across(
+    .cols = contains("score"),
+    .fn = ~ifelse(diagSub == "FGID", NA, .)
+  )) %>% 
+  mutate(weighted_score_range = ifelse(score_type == "PUCAI", NA, weighted_score_range))
+
+metadata.col.demo.score
+```
+
+
+```{r}
+clinical <- metadata.col.demo.score %>% 
+  filter(!(participant_id %in% c("001-002", "001-004", "001-006", "001-010"))) %>% # remove samples without T0 GEX LP or EPI
+  mutate(subgroup_primary = ifelse(participant_id == "001-019", "colonic", subgroup_primary)) %>% # LK said we'll classify as colonic
+  mutate(subgroup_primary = ifelse(participant_id %in% c("003-034", "003-036"), "pancolitis", subgroup_primary)) %>% # manually set based on redcap data
+  group_by(participant_id) %>% 
+  mutate(age = min(age)) %>% 
+  ungroup %>% 
+  mutate(months = days/(365/12)) %>% 
+  mutate(months = ifelse(months != 0, label_number(scale_cut = cut_short_scale())(months), NA)) %>% 
+  mutate(months = ifelse(participant_id == "001-040", "12.197 + 24.164", months)) %>% # reconcile months manually
+  mutate(across(.cols = c(score_type, severity_score_range), .fns = ~ifelse(. == "NM", NA, as.character(.)))) %>% 
+  mutate(score_type = forcats::fct_relevel(score_type, c("PCDAI", "PUCAI"))) %>% 
+  mutate(weighted_severity_score = ifelse(score_type == "PUCAI", NA, weighted_severity_score)) %>% 
+  mutate(severity_score_range = ifelse(score_type == "PCDAI", weighted_score_range, severity_score_range)) %>% 
+  mutate(severity_score_range = forcats::fct_relevel(severity_score_range, c("Remission", "Mild", "Moderate", "Severe"))) %>%
+  mutate(antitnf_response = forcats::fct_relevel(antitnf_response, c("NM","NOA","FR","PR","NR"))) %>%
+  mutate(data_type = case_when(
+    data_type == "scGEX" ~ "GEX",
+    data_type == "scVDJ" ~ "TCR"
+  )) %>% 
+  group_by(participant_id) %>% 
+  fill(months, .direction = "updown") %>% 
+  ungroup %>% 
+  select(participant_id, diagSub, subgroup_primary, antitnf_response, sex, race, ethnicity, age, months, site, timepoint, layer, score_type, severity_score, weighted_severity_score, severity_score_range, data_type) %>% 
+  distinct(diagSub, subgroup_primary, antitnf_response, participant_id, timepoint, layer, data_type, .keep_all = T) %>% 
+  arrange(participant_id, timepoint) %>% 
+  relocate(participant_id, .after = antitnf_response)
+
+clinical
+```
+
+```{r}
+clinical.wide <- clinical %>% 
+  mutate(biopsypresent = "X") %>% 
+  pivot_wider(names_from = c(timepoint, layer, data_type), values_from = biopsypresent, values_fill = NA) %>% 
+  relocate(
+    participant_id,
+    diagSub:severity_score_range,
+    T0_LP_GEX, T0_LP_TCR,
+    T0_EPI_GEX, T0_EPI_TCR,
+    R_LP_GEX, R_LP_TCR,
+    R_EPI_GEX, R_EPI_TCR,
+    R2_LP_GEX, R2_LP_TCR,
+    R2_EPI_GEX, R2_EPI_TCR
+  )
+
+clinical.wide
+```
+
+```{r}
+clinical.wide$participant_id %>% table %>% range # should be 1 1, if not investigate
+```
+
+```{r}
+clinical.wide %>% 
+  group_by(diagSub) %>% 
+  summarise(median = signif(median(age),3), IQR = signif(IQR(age),3)) %>% 
+  mutate(q25q75 = paste(
+    signif(median-IQR/2,3), 
+    signif(median+IQR/2,3), 
+    sep = "-"))
+
+```
+
+
+```{r}
+clinical.wide %>% 
+  group_by(diagSub) %>% 
+  summarise(
+    median = signif(median(age),3), 
+    q25 = signif(quantile(age,0.25),3),
+    q75 = signif(quantile(age,0.75),3),
+    ) %>% 
+  mutate(IQR = paste(q25, q75,  sep = "-"), .after = median)
+
+```
+
+```{r}
+clinical.wide %>% 
+  select(diagSub, age) %>% 
+  aov(age ~ diagSub, .) %>% 
+  summary
+```
+
+```{r}
+clinical.wide %>% 
+  select(sex, diagSub) %>% 
+  table %>% 
+  data.frame %>% 
+  pivot_wider(id_cols = sex, names_from = diagSub, values_from = Freq)
+```
+
+
+```{r}
+clinical.wide %>% 
+  select(sex, diagSub) %>% 
+  table %>% 
+  chisq.test
+```
+
+```{r}
+clinical.wide %>% 
+  select(race, diagSub) %>% 
+  table %>% 
+  data.frame %>% 
+  pivot_wider(id_cols = race, names_from = diagSub, values_from = Freq)
+```
+
+
+```{r}
+clinical.wide %>% 
+  select(race, diagSub) %>% 
+  table %>% 
+  chisq.test
+```
+
+```{r}
+clinical.wide %>% 
+  select(ethnicity, diagSub) %>% 
+  table %>% 
+  data.frame %>% 
+  pivot_wider(id_cols = ethnicity, names_from = diagSub, values_from = Freq)
+```
+
+
+```{r}
+clinical.wide %>% 
+  select(ethnicity, diagSub) %>% 
+  table %>% 
+  chisq.test
+```
+
+Add IHC and HuProt data
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+
+p28 <- readRDS("out/ihc/panimmune/panel28_long.rds")
+p28
+```
+
+```{r}
+clinical.wide.ihc <- clinical.wide %>% 
+  left_join(p20 %>% mutate(IHC_p20 = "X") %>% distinct(participant_id, .keep_all = T) %>%  select(participant_id, IHC_p20), by = "participant_id") %>% 
+  left_join(p28 %>% mutate(IHC_p28 = "X") %>% distinct(participant_id, .keep_all = T) %>%  select(participant_id, IHC_p28), by = "participant_id")
+
+clinical.wide.ihc
+```
+
+```{r}
+huprot <- read_csv("out/huprot/huprot_metadata.csv")
+huprot
+```
+
+```{r}
+clinical.wide.ihc.huprot <- clinical.wide.ihc %>% 
+  left_join(huprot %>% mutate(HuProt = "X") %>% distinct(participant_id, .keep_all = T) %>%  select(participant_id, HuProt), by = "participant_id")
+
+clinical.wide.ihc.huprot
+```
+
+```{r}
+hla <- read_csv("out/hla/allele_assigned/PREDICT_REGNIMP__HLA_Combined.csv")
+hla
+```
+
+```{r}
+clinical.wide.ihc.huprot.hla <- clinical.wide.ihc.huprot %>% 
+  left_join(hla %>% mutate(hla = "X") %>% distinct(participant_id, .keep_all = T) %>%  select(participant_id, hla), by = "participant_id")
+
+clinical.wide.ihc.huprot.hla
+```
+
+
+```{r}
+clinical.wide.filtered.reformatted <- clinical.wide.ihc.huprot.hla %>% 
+  rename(
+    `Disease Group` = diagSub,
+    `Disease Subgroup` = subgroup_primary,
+    `Anti-TNF Response` = antitnf_response,
+    `Participant ID` = participant_id,
+    `Sex` = sex,
+    `Race` = race,
+    `Ethnicity` = ethnicity,
+    `Age` = age,
+    `Months Between Biopsies` = months,
+    `Clinical Site` = site,
+    `Score Type` = score_type,
+    `Unweighted Severity Score` = severity_score,
+    `Weighted Severity Score` = weighted_severity_score,
+    `Severity Group` = severity_score_range,
+    `IHC Panel A` = IHC_p20,
+    `IHC Panel B` = IHC_p28,
+    `HLA` = hla
+  )
+
+clinical.wide.filtered.reformatted
+```
+
+
+# UMIs
+
+```{r}
+colon_sites <- c("Right", "Right/Transverse", "Transverse", "Left/Transverse", "Left", "Left/Rectosigmoid", "Rectosigmoid", "Rectosigmoid/Rectum", "Rectum")
+colon_values <- seq.int(0,1, length.out = length(colon_sites))
+names(colon_values) <- colon_sites
+colon_values
+colon_values <- c("Not specified" = NA, colon_values)
+```
+
+
+```{r}
+obs.orig <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs.orig
+
+obs <- obs.orig %>% 
+  select(-colon_site, -colon_value) %>% 
+  left_join(metadata.predict %>% filter(data_type == "scGEX") %>%  select(sample, colon_site), by = "sample") %>% 
+  mutate(colon_site = fct_relevel(colon_site, 
+                                  c("Not specified", "Right", "Right/Transverse", "Left/Transverse", 
+                                    "Transverse", "Left", "Left/Rectosigmoid", 
+                                    "Rectosigmoid", "Rectosigmoid/Rectum", "Rectum"))) %>%
+  mutate(colon_value = colon_values[as.character(colon_site)]) %>% 
+  relocate(colon_value, .after = colon_site)
+
+obs
+```
+
+
+```{r}
+stats.sample <- obs %>% 
+  group_by(participant_id, timepoint, sample, site, version_10x, colon_site, layer) %>% 
+  summarise("Mean UMIs" = mean(nCount_RNA),
+            "Mean Genes" = mean(nFeature_RNA)) %>% 
+  ungroup %>% 
+  select(-participant_id, -timepoint) %>% 
+  rename(Sample = sample, `Version 10x` = version_10x, `Study Site` = site, `Colon Location` = colon_site, `Tissue Layer` = layer)
+
+stats.sample 
+```
+
+```{r}
+stats.biopsy <- obs %>% 
+  group_by(participant_id, timepoint, biopsy, site, version_10x, colon_site) %>% 
+  summarise("Mean UMIs" = mean(nCount_RNA),
+            "Mean Genes" = mean(nFeature_RNA)) %>% 
+  ungroup %>% 
+  select(-participant_id, -timepoint) %>% 
+  rename(Biopsy = biopsy, `Version 10x` = version_10x, `Study Site` = site, `Colon Location` = colon_site)
+
+stats.biopsy 
+```
+
+```{r}
+stats.cellstate <- obs %>% 
+  group_by(celltype, cellsubtype, cellstate) %>% 
+  summarise("Mean UMIs" = mean(nCount_RNA),
+            "Mean Genes" = mean(nFeature_RNA)) %>% 
+  ungroup %>% 
+  rename(`CellType` = celltype, `CellSubtype` = cellsubtype, `CellState` = cellstate) %>% 
+  arrange(CellState)
+
+stats.cellstate
+```
+
+# Frequencies
+
+```{r}
+annotation.freq.out <- obs %>% 
+  dplyr::rename(CellState = cellstate, CellSubtype = cellsubtype, CellType = celltype) %>% 
+  add_count(CellType, name = "CellType_counts") %>% 
+  add_count(CellSubtype, name = "CellSubtype_counts") %>% 
+  add_count(CellState, name = "CellState_counts") %>% 
+  distinct(
+    CellType, CellType_counts, 
+    CellSubtype, CellSubtype_counts, 
+    CellState, CellState_counts
+    ) %>% 
+  arrange(CellState, CellSubtype, CellType)
+
+annotation.freq.out
+```
+
+```{r}
+annotation.biopsy.celltype <- obs %>% 
+  group_by(participant_id, timepoint, biopsy) %>% 
+  count(celltype) %>% 
+  ungroup %>% 
+  arrange(celltype) %>% 
+  pivot_wider(id_cols = biopsy, names_from = celltype, values_from = n, values_fill = 0)
+
+annotation.biopsy.celltype
+```
+
+```{r}
+annotation.biopsy.cellsubtype <- obs %>% 
+  group_by(participant_id, timepoint, biopsy) %>% 
+  count(cellsubtype) %>% 
+  ungroup %>% 
+  arrange(cellsubtype) %>% 
+  pivot_wider(id_cols = biopsy, names_from = cellsubtype, values_from = n, values_fill = 0)
+
+annotation.biopsy.cellsubtype
+```
+
+```{r}
+annotation.biopsy.cellstate <- obs %>% 
+  group_by(participant_id, timepoint, biopsy) %>% 
+  count(cellstate) %>% 
+  ungroup %>% 
+  arrange(cellstate) %>% 
+  pivot_wider(id_cols = biopsy, names_from = cellstate, values_from = n, values_fill = 0)
+
+annotation.biopsy.cellstate
+```
+
+```{r}
+annotation.sample.celltype <- obs %>% 
+  group_by(participant_id, timepoint, sample) %>% 
+  count(celltype) %>% 
+  ungroup %>% 
+  arrange(celltype) %>% 
+  pivot_wider(id_cols = sample, names_from = celltype, values_from = n, values_fill = 0)
+
+annotation.sample.celltype
+```
+
+```{r}
+annotation.sample.cellsubtype <- obs %>% 
+  group_by(participant_id, timepoint, sample) %>% 
+  count(cellsubtype) %>% 
+  ungroup %>% 
+  arrange(cellsubtype) %>% 
+  pivot_wider(id_cols = sample, names_from = cellsubtype, values_from = n, values_fill = 0)
+
+annotation.sample.cellsubtype
+```
+
+```{r}
+annotation.sample.cellstate <- obs %>% 
+  group_by(participant_id, timepoint, sample) %>% 
+  count(cellstate) %>% 
+  ungroup %>% 
+  arrange(cellstate) %>% 
+  pivot_wider(id_cols = sample, names_from = cellstate, values_from = n, values_fill = 0)
+
+annotation.sample.cellstate
+```
+
+# Deidentification
+
+We received the following suggestion during preprint submission:
+
+"Exact ages should be replaced with age ranges (5 years minimum), exact dates and photographs should be removed, sample and patient IDs should be consecutive numbers to prevent identification of patients."
+
+```{r}
+clinical.wide.filtered.reformatted
+```
+
+```{r}
+clinical.wide.filtered.reformatted$Age %>% range
+```
+
+```{r}
+clinical.wide.filtered.reformatted.agerange <- clinical.wide.filtered.reformatted %>% 
+  mutate(Age = case_when(
+    Age >= 6 & Age < 11 ~ "6-10",
+    Age >= 11 & Age < 16 ~ "11-15",
+    Age >= 16 ~ "16+",
+  )) %>% 
+  mutate(Age = fct_relevel(Age, c("6-10", "11-15", "16+")))
+
+clinical.wide.filtered.reformatted.agerange %>% arrange(Age) %>% relocate(Age, .after = Race)
+```
+
+# Annotations and UMAP
+
+Combine all cell annotations and UMAP coordinates into a single list
+
+## Annotations
+
+```{r}
+obs.annotations <- obs.orig %>% 
+  rownames_to_column("barcode") %>% 
+  select(barcode, celltype, cellsubtype, cellstate)
+
+obs.annotations
+```
+
+## UMAP
+
+```{r}
+umap.AllCells <- read_csv("out/dimred/umap/predictCOL__CB_AllCells_umap.csv")
+umap.AllCells
+```
+
+```{r}
+umap.ColEpi <- read_csv("out/dimred/umap/predictCOL__CB_ColEpi_umap.csv")
+umap.ColEpi
+```
+
+```{r}
+umap.Stroma <- read_csv("out/dimred/umap/predictCOL__CB_Stroma_umap.csv")
+umap.Stroma
+```
+
+```{r}
+umap.Myeloid <- read_csv("out/dimred/umap/predictCOL__CB_Myeloid_umap.csv")
+umap.Myeloid
+```
+
+```{r}
+umap.Plasma <- read_csv("out/dimred/umap/predictCOL__CB_Plasma_umap.csv")
+umap.Plasma
+```
+
+```{r}
+umap.BCell <- read_csv("out/dimred/umap/predictCOL__CB_BCell_umap.csv")
+umap.BCell
+```
+
+```{r}
+umap.TNKILC <- read_csv("out/dimred/umap/predictCOL__CB_TNKILC_umap.csv")
+umap.TNKILC
+```
+
+```{r}
+umap.Celltypes <- rbind(
+  umap.ColEpi,
+  umap.Stroma,
+  umap.Myeloid,
+  umap.Plasma,
+  umap.BCell,
+  umap.TNKILC
+)
+
+umap.Celltypes
+```
+
+```{r}
+obs.annotations
+```
+
+
+```{r}
+obs.anno.umap <- obs.annotations %>% 
+  left_join(
+    .,
+    umap.AllCells %>% dplyr::rename(UMAP__All_X = X_umap1, UMAP__All_Y = X_umap2),
+    by = "barcode"
+  ) %>% 
+  left_join(
+    .,
+    umap.Celltypes %>% dplyr::rename(UMAP__Celltype_X = X_umap1, UMAP__Celltype_Y = X_umap2),
+    by = "barcode"
+  ) 
+
+obs.anno.umap
+```
+
+# Tfh UMAP
+
+```{r}
+umap.Tfh <- read_csv("out/dimred/umap/predictCOL__CB_Tfh_umap.csv")
+umap.Tfh
+```
+
+```{r}
+obs.anno.umap.tfh <- left_join(umap.Tfh, obs.annotations %>% select(barcode, cellstate), by = "barcode")
+obs.anno.umap.tfh
+```
+
+
+# Make List and Export
+
+```{r}
+part_samples.out.agerange <- list(
+  "Key" = data.frame(),
+  "Participants and Samples" = clinical.wide.filtered.reformatted.agerange,
+  "Cell Annotations and UMAP" = obs.anno.umap,
+  "Tfh UMAP" = obs.anno.umap.tfh,
+  "UMIs by Biopsy" = stats.biopsy,
+  "UMIs by Sample" = stats.sample,
+  "UMIs by CellState" = stats.cellstate,
+  "Annotation Frequencies" = annotation.freq.out,
+  "CellType by Biopsy" = annotation.biopsy.celltype,
+  "CellSubtype by Biopsy" = annotation.biopsy.cellsubtype,
+  "CellState by Biopsy" = annotation.biopsy.cellstate,
+  "CellType by Sample" = annotation.sample.celltype,
+  "CellSubtype by Sample" = annotation.sample.cellsubtype,
+  "CellState by Sample" = annotation.sample.cellstate
+)
+
+part_samples.out.agerange
+```
+
+```{r}
+write_xlsx(part_samples.out.agerange, 
+           path = "out/tables/Supplemental Table 1 - Participants and Samples.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

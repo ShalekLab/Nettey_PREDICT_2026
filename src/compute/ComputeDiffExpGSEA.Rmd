@@ -1,0 +1,1927 @@
+---
+title: "Compute Differential Expression and Gene Set Enrichment Analysis"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compute all differential expression and gene set enrichment analyses. Because there are so few 10x version 2 samples among what will be analyzed, will check PCA before including 10x version as a blocking variable (may not include if not a clear effect or 0-1 v2 sample numbers in a condition).
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(ggrepel)
+library(fgsea)
+library(DESeq2)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+colIBD <- "#EB6D33"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colPre <-  colcCD
+colPost <- "#ee82ee"
+prepostColVec <- c("PreTx"=colPre, "PostTx"=colPost)
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+colCellgroups <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+cellgroups <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+names(colCellgroups) <- cellgroups
+
+
+`%notin%` <- Negate(`%in%`)
+
+min.counts.ct <- 250
+min.counts.cst <- 50
+
+pathways <- gmtPathways("../../../data/msigdb/c2.cp.reactome.v2023.2.Hs.symbols.gmt")
+
+source("../functions/FeaturesFilter.R")
+```
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+# cCD vs. UC
+
+```{r}
+seuobj.ccduc <- subset(seuobj, subset = timepoint == "T0" & diagSub %in% c("cCD", "UC"))
+seuobj.ccduc
+```
+
+```{r}
+sample.ccduc.df <- seuobj.ccduc@meta.data %>% distinct(visit, .keep_all = T)
+table(sample.ccduc.df$diagSub, sample.ccduc.df$version_10x)
+```
+
+## Thelper
+
+### Differential Expression
+
+```{r}
+annos.ccduc.thelper <- list(Thelper = c("Thelper"))
+annos.ccduc.thelper
+```
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ccduc.thelper.list <- lapply(names(annos.ccduc.thelper), function(anno){
+  thisobj <- subset(seuobj.ccduc, subset = cellsubtype %in% annos.ccduc.thelper[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$diagSub <- paste0("_", thisobj$diagSub)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                      assays = "RNA", return.seurat = T, group.by = c("biopsy", "diagSub", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+
+  aggobj$anno <- anno
+  
+  aggobj$diagSub <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$diagSub <- fct_relevel(aggobj$diagSub, c("cCD", "UC"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+
+  return(aggobj)
+})
+
+names(pbulk.ccduc.thelper.list) <- names(annos.ccduc.thelper)
+
+pbulk.ccduc.thelper.list
+```
+
+```{r}
+lapply(pbulk.ccduc.thelper.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ccduc.thelper.list, function(x) x@meta.data$diagSub %>% table)
+```
+
+```{r}
+min.samples <- 15 
+for (anno in names(pbulk.ccduc.thelper.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ccduc.thelper.list[[anno]], slot = "counts") >= min.counts.cst) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ccduc.thelper.list.filt <- lapply(pbulk.ccduc.thelper.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.cst) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ccduc.thelper.list.filt
+```
+
+```{r}
+pbulk.ccduc.thelper.list.filt$Thelper@meta.data
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ccduc.thelper.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccduc.thelper.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ccduc.thelper.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + diagSub)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ccduc.thelper.list <- lapply(names(pbulk.ccduc.thelper.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccduc.thelper.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ccduc.thelper.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + diagSub)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("diagSub","UC","cCD"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+
+  res.out <- results(ddsSE, contrast=c("diagSub","UC","cCD"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ccduc.thelper.list) <- names(pbulk.ccduc.thelper.list.filt)
+```
+
+```{r}
+res.ccduc.thelper.list
+```
+
+
+```{r}
+de.ccduc.thelper.df <- plyr::ldply(res.ccduc.thelper.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ccduc.thelper.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ccduc.thelper.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(diagSub = ifelse(sign(stat) == 1, "UC", "cCD")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, diagSub, "Not DE")) %>% 
+         mutate(diagSub = fct_relevel(diagSub, c("cCD", "UC"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = diagSubColVec, limits = c("cCD", "UC")) +
+  scale_fill_manual(values = c(diagSubColVec, "Not DE" = "gray50"), limits = c("cCD", "Not DE", "UC"), 
+                    labels = c("cCD" = "Enriched in cCD", 
+                               "Not DE" = "Not DE", 
+                               "UC" = "Enriched in UC")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ccduc.thelper.df, "out/deseq2/DE__UCvscCD_Thelper.csv")
+```
+
+## IBD-Associated
+
+### Differential Expression
+
+```{r}
+annos.ccduc.ibdassoc <- list(
+  IBDAssocEpi = c("Inflm. Col.", "Inflm. Gob", "CCL24+ Gob.", "LGR5+ Epi.", "SAA+ Epi."),
+  IBDAssocFibro = c("TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  IBDAssocMonoMac = c("Inflm. Mac", "MNP")
+)
+annos.ccduc.ibdassoc
+```
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ccduc.ibdassoc.list <- lapply(names(annos.ccduc.ibdassoc), function(anno){
+  thisobj <- subset(seuobj.ccduc, subset = cellstate %in% annos.ccduc.ibdassoc[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$diagSub <- paste0("_", thisobj$diagSub)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                      assays = "RNA", return.seurat = T, group.by = c("biopsy", "diagSub", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+
+  aggobj$anno <- anno
+  
+  aggobj$diagSub <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$diagSub <- fct_relevel(aggobj$diagSub, c("cCD", "UC"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+
+  return(aggobj)
+})
+
+names(pbulk.ccduc.ibdassoc.list) <- names(annos.ccduc.ibdassoc)
+
+pbulk.ccduc.ibdassoc.list
+```
+
+```{r}
+lapply(pbulk.ccduc.ibdassoc.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ccduc.ibdassoc.list, function(x) x@meta.data$diagSub %>% table)
+```
+
+```{r}
+min.samples <- 13 
+for (anno in names(pbulk.ccduc.ibdassoc.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ccduc.ibdassoc.list[[anno]], slot = "counts") >= min.counts.cst) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ccduc.ibdassoc.list.filt <- lapply(pbulk.ccduc.ibdassoc.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.cst) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ccduc.ibdassoc.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ccduc.ibdassoc.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccduc.ibdassoc.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ccduc.ibdassoc.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + diagSub)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ccduc.ibdassoc.list <- lapply(names(pbulk.ccduc.ibdassoc.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccduc.ibdassoc.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ccduc.ibdassoc.list.filt[[anno]]@meta.data, 
+                                  design = ~ version_10x + diagSub)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("diagSub","UC","cCD"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("diagSub","UC","cCD"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ccduc.ibdassoc.list) <- names(pbulk.ccduc.ibdassoc.list.filt)
+```
+
+```{r}
+de.ccduc.ibdassoc.df <- plyr::ldply(res.ccduc.ibdassoc.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ccduc.ibdassoc.df
+```
+
+```{r, fig.width=30, fig.height=12}
+ggplot(de.ccduc.ibdassoc.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(diagSub = ifelse(sign(stat) == 1, "UC", "cCD")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, diagSub, "Not DE")) %>% 
+         mutate(diagSub = fct_relevel(diagSub, c("cCD", "UC"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = diagSubColVec, limits = c("cCD", "UC")) +
+  scale_fill_manual(values = c(diagSubColVec, "Not DE" = "gray50"), limits = c("cCD", "Not DE", "UC"), 
+                    labels = c("cCD" = "Enriched in cCD", 
+                               "Not DE" = "Not DE", 
+                               "UC" = "Enriched in UC")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ccduc.ibdassoc.df, "out/deseq2/DE__UCvscCD_IBDAssoc.csv")
+```
+
+### GSEA
+
+```{r}
+ranks.ccduc.ibdassoc.list <- lapply(res.ccduc.ibdassoc.list, function(this.res){
+  these.ranks <- this.res %>% 
+    arrange(stat) %>% 
+    pull(stat, gene)
+  
+  length(these.ranks) %>% print
+
+  these.ranks %>% head %>% print
+  message("\n")
+
+  these.ranks %>% tail %>% print
+  message("\n")
+  
+  return(these.ranks)
+})
+```
+
+```{r}
+set.seed(thisseed)
+
+fgseaRes.ccduc.ibdassoc.list <- lapply(ranks.ccduc.ibdassoc.list, function(this.rank) {
+  this.fgsea <- fgsea(pathways=pathways, stats=this.rank, nPermSimple = 1e3, minSize = 15, maxSize = 100, )
+  
+  this.fgsea <- this.fgsea %>% 
+    mutate(pathway = str_remove(pathway, "REACTOME_")) %>% 
+    mutate(pathway = str_replace_all(pathway, "_", " ")) %>% 
+    rowwise %>% 
+    mutate(leadingEdgeNum = length(leadingEdge)) %>% 
+    mutate(Genes = paste(unlist(leadingEdge), collapse = " ")) %>% 
+    ungroup %>% 
+    select(-leadingEdge)
+  
+  this.fgsea %>% arrange(padj) %>% print
+  
+  return(this.fgsea)
+})
+```
+
+```{r}
+fgseaRes.ccduc.ibdassoc.df <- plyr::ldply(fgseaRes.ccduc.ibdassoc.list, .id = "annotation") %>% arrange(padj)
+fgseaRes.ccduc.ibdassoc.df
+```
+
+
+```{r, fig.height=12, fig.width=20}
+fgseaRes.ccduc.ibdassoc.df %>% 
+  mutate(diagSub = ifelse(sign(NES) == 1, "UC", "cCD")) %>% 
+  mutate(NES = ifelse(sign(NES) == -1, -NES, NES)) %>% 
+  filter(padj <= 0.05) %>% 
+  group_by(annotation, diagSub) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  ungroup %>% 
+  mutate(pathway = str_wrap(pathway, width = 35)) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_viridis_c(option = "turbo") +
+  geom_text(size = 2, fontface="bold", hjust=1, aes(label = str_wrap(Genes, 60), x = NES-0.01)) +
+  facet_wrap(diagSub~annotation, scales = "free", nrow = 2) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold"),
+    strip.background = element_rect(linewidth = 2),
+    strip.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r}
+write_csv(fgseaRes.ccduc.ibdassoc.df, "out/gsea/GSEA__UCvscCD_IBDAssoc.csv")
+```
+
+# cCD NOA vs. aTNF
+
+```{r}
+seuobj.ccdnoa <- subset(seuobj, subset = diagSub == "cCD" & timepoint == "T0" & antitnf_response %in% c("NOA", "FR", "PR", "NR"))
+seuobj.ccdnoa
+```
+
+```{r}
+seuobj.ccdnoa <- AddMetaData(seuobj.ccdnoa,
+                      seuobj.ccdnoa@meta.data %>%
+                        rownames_to_column("barcode") %>%
+                        mutate(atnf = ifelse(antitnf_response == "NOA", "NOA", as.character(antitnf_response))) %>% 
+                        mutate(atnf = ifelse(antitnf_response %in% c("FR", "PR", "NR"), "aTNF", as.character(antitnf_response))) %>% 
+                        mutate(atnf = fct_relevel(atnf, c("NOA", "aTNF"))) %>% 
+                        column_to_rownames("barcode") %>%
+                        droplevels
+)
+
+seuobj.ccdnoa
+seuobj.ccdnoa$atnf %>% levels
+
+```
+
+```{r}
+sample.ccdnoa.df <- seuobj.ccdnoa@meta.data %>% distinct(visit, .keep_all = T)
+table(sample.ccdnoa.df$atnf, sample.ccdnoa.df$version_10x)
+```
+
+## All Celltypes
+
+### Differential Expression
+
+```{r}
+annos.ccdnoa.celltypes <- list(
+  ColEpi = c("ColEpi"),
+  Stroma = c("Stroma"),
+  Myeloid = c("Myeloid"),
+  Plasma = c("Plasma"),
+  BCell = c("BCell"),
+  TNKILC = c("TNKILC")
+)
+annos.ccdnoa.celltypes
+```
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ccdnoa.celltypes.list <- lapply(names(annos.ccdnoa.celltypes), function(anno){
+  thisobj <- subset(seuobj.ccdnoa, subset = celltype %in% annos.ccdnoa.celltypes[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$atnf <- paste0("_", thisobj$atnf)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+  
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                                assays = "RNA", return.seurat = T, group.by = c("biopsy", "atnf", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+  
+  aggobj$anno <- anno
+  
+  aggobj$atnf <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$atnf <- fct_relevel(aggobj$atnf, c("NOA", "aTNF"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+  
+  return(aggobj)
+})
+
+names(pbulk.ccdnoa.celltypes.list) <- names(annos.ccdnoa.celltypes)
+
+pbulk.ccdnoa.celltypes.list
+```
+
+```{r}
+lapply(pbulk.ccdnoa.celltypes.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ccdnoa.celltypes.list, function(x) x@meta.data$atnf %>% table)
+```
+
+```{r}
+min.samples <- 5 
+for (anno in names(pbulk.ccdnoa.celltypes.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ccdnoa.celltypes.list[[anno]], slot = "counts") >= min.counts.ct) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ccdnoa.celltypes.list.filt <- lapply(pbulk.ccdnoa.celltypes.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.ct) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ccdnoa.celltypes.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ccdnoa.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccdnoa.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ccdnoa.celltypes.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + atnf)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ccdnoa.celltypes.list <- lapply(names(pbulk.ccdnoa.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccdnoa.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ccdnoa.celltypes.list.filt[[anno]]@meta.data, 
+                                  design = ~ version_10x + atnf)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("atnf","aTNF","NOA"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("atnf","aTNF","NOA"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ccdnoa.celltypes.list) <- names(pbulk.ccdnoa.celltypes.list.filt)
+```
+
+```{r}
+res.ccdnoa.celltypes.list
+```
+
+```{r}
+de.ccdnoa.celltypes.df <- plyr::ldply(res.ccdnoa.celltypes.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ccdnoa.celltypes.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ccdnoa.celltypes.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(atnf = ifelse(sign(stat) == 1, "aTNF", "NOA")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, atnf, "Not DE")) %>% 
+         mutate(atnf = fct_relevel(atnf, c("NOA", "aTNF"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = c(atnfColVec, "Not DE" = "gray50", "aTNF" = colcCD), limits = c("NOA", "aTNF")) +
+  scale_fill_manual(values = c(atnfColVec, "Not DE" = "gray50", "aTNF" = colcCD), limits = c("NOA", "Not DE", "aTNF"), 
+                    labels = c("NOA" = "Enriched in NOA", 
+                               "Not DE" = "Not DE", 
+                               "aTNF" = "Enriched in aTNF")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 2) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ccdnoa.celltypes.df, "out/deseq2/DE__cCDaTNFvsNOA_celltypes.csv")
+```
+
+# cCD PR vs. FR
+
+```{r}
+seuobj.ccdfrpr <- subset(seuobj, subset = diagSub == "cCD" & timepoint == "T0" & antitnf_response %in% c("FR", "PR"))
+seuobj.ccdfrpr
+```
+
+```{r}
+sample.ccdfrpr.df <- seuobj.ccdfrpr@meta.data %>% distinct(visit, .keep_all = T)
+table(sample.ccdfrpr.df$antitnf_response, sample.ccdfrpr.df$version_10x)
+```
+
+## All Celltypes
+
+```{r}
+annos.ccdfrpr.celltypes <- list(
+  ColEpi = c("ColEpi"),
+  Stroma = c("Stroma"),
+  Myeloid = c("Myeloid"),
+  Plasma = c("Plasma"),
+  BCell = c("BCell"),
+  TNKILC = c("TNKILC")
+)
+annos.ccdfrpr.celltypes
+```
+
+### Differential Expression
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ccdfrpr.celltypes.list <- lapply(names(annos.ccdfrpr.celltypes), function(anno){
+  thisobj <- subset(seuobj.ccdfrpr, subset = celltype %in% annos.ccdfrpr.celltypes[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$antitnf_response <- paste0("_", thisobj$antitnf_response)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+  
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                                assays = "RNA", return.seurat = T, group.by = c("biopsy", "antitnf_response", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+  
+  aggobj$anno <- anno
+  
+  aggobj$antitnf_response <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$antitnf_response <- fct_relevel(aggobj$antitnf_response, c("FR", "PR"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+  
+  return(aggobj)
+})
+
+names(pbulk.ccdfrpr.celltypes.list) <- names(annos.ccdfrpr.celltypes)
+
+pbulk.ccdfrpr.celltypes.list
+```
+
+```{r}
+lapply(pbulk.ccdfrpr.celltypes.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ccdfrpr.celltypes.list, function(x) x@meta.data$antitnf_response %>% table)
+```
+
+```{r}
+min.samples <- 9
+for (anno in names(pbulk.ccdfrpr.celltypes.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ccdfrpr.celltypes.list[[anno]], slot = "counts") >= min.counts.ct) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ccdfrpr.celltypes.list.filt <- lapply(pbulk.ccdfrpr.celltypes.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.ct) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ccdfrpr.celltypes.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ccdfrpr.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccdfrpr.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ccdfrpr.celltypes.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + antitnf_response)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ccdfrpr.celltypes.list <- lapply(names(pbulk.ccdfrpr.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccdfrpr.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ccdfrpr.celltypes.list.filt[[anno]]@meta.data, 
+                                  design = ~ version_10x + antitnf_response)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("antitnf_response","PR","FR"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("antitnf_response","PR","FR"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ccdfrpr.celltypes.list) <- names(pbulk.ccdfrpr.celltypes.list.filt)
+```
+
+```{r}
+res.ccdfrpr.celltypes.list
+```
+
+
+```{r}
+de.ccdfrpr.celltypes.df <- plyr::ldply(res.ccdfrpr.celltypes.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ccdfrpr.celltypes.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ccdfrpr.celltypes.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(antitnf_response = ifelse(sign(stat) == 1, "PR", "FR")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, antitnf_response, "Not DE")) %>% 
+         mutate(antitnf_response = fct_relevel(antitnf_response, c("FR", "PR"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = c(atnfColVec, "Not DE" = "gray50"), limits = c("FR", "PR")) +
+  scale_fill_manual(values = c(atnfColVec, "Not DE" = "gray50"), limits = c("FR", "Not DE", "PR"), 
+                    labels = c("FR" = "Enriched in FR", 
+                               "Not DE" = "Not DE", 
+                               "PR" = "Enriched in PR")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 2) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ccdfrpr.celltypes.df, "out/deseq2/DE__cCDPRvsFR_celltypes.csv")
+```
+
+# cCD Pre vs. Post
+
+```{r}
+seuobj.ccdprepost <- subset(seuobj, subset = diagSub == "cCD" & timepoint %in% c("T0", "R") & celltype %in% c("Myeloid", "TNKILC") & antitnf_response %in% c("FR", "PR", "NR"))
+seuobj.ccdprepost
+```
+
+```{r}
+seuobj.ccdprepost <- AddMetaData(seuobj.ccdprepost,
+                             seuobj.ccdprepost@meta.data %>%
+                               rownames_to_column("barcode") %>%
+                               mutate(prepost = ifelse(timepoint == "T0", "PreTx", "PostTx")) %>% 
+                               mutate(prepost = fct_relevel(prepost, c("PreTx", "PostTx"))) %>% 
+                               column_to_rownames("barcode") %>%
+                               droplevels
+)
+
+seuobj.ccdprepost
+seuobj.ccdprepost$prepost %>% levels
+```
+
+
+```{r}
+sample.ccdprepost.df <- seuobj.ccdprepost@meta.data %>% distinct(visit, .keep_all = T)
+table(sample.ccdprepost.df$prepost, sample.ccdprepost.df$version_10x)
+```
+
+## All Celltypes
+
+### Differential Expression
+
+```{r}
+annos.ccdprepost.celltypes <- list(
+  Myeloid = c("Myeloid"),
+  TNKILC = c("TNKILC")
+)
+annos.ccdprepost.celltypes
+```
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ccdprepost.atnfcelltypes.list <- lapply(names(annos.ccdprepost.celltypes), function(anno){
+  thisobj <- subset(seuobj.ccdprepost, subset = celltype %in% annos.ccdprepost.celltypes[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$prepost <- paste0("_", thisobj$prepost)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                                assays = "RNA", return.seurat = T, group.by = c("biopsy", "prepost", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+  
+  aggobj$anno <- anno
+  
+  aggobj$prepost <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$prepost <- fct_relevel(aggobj$prepost, c("PreTx", "PostTx"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+  
+  return(aggobj)
+})
+
+names(pbulk.ccdprepost.atnfcelltypes.list) <- names(annos.ccdprepost.celltypes)
+
+pbulk.ccdprepost.atnfcelltypes.list
+```
+
+```{r}
+lapply(pbulk.ccdprepost.atnfcelltypes.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ccdprepost.atnfcelltypes.list, function(x) x@meta.data$prepost %>% table)
+```
+
+```{r}
+min.samples <- 9 
+for (anno in names(pbulk.ccdprepost.atnfcelltypes.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ccdprepost.atnfcelltypes.list[[anno]], slot = "counts") >= min.counts.ct) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ccdprepost.atnfcelltypes.list.filt <- lapply(pbulk.ccdprepost.atnfcelltypes.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.ct) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ccdprepost.atnfcelltypes.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ccdprepost.atnfcelltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccdprepost.atnfcelltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ccdprepost.atnfcelltypes.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + prepost)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ccdprepost.atnfcelltypes.list <- lapply(names(pbulk.ccdprepost.atnfcelltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ccdprepost.atnfcelltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ccdprepost.atnfcelltypes.list.filt[[anno]]@meta.data, 
+                                  design = ~ version_10x + prepost)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("prepost","PostTx","PreTx"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("prepost","PostTx","PreTx"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ccdprepost.atnfcelltypes.list) <- names(pbulk.ccdprepost.atnfcelltypes.list.filt)
+```
+
+```{r}
+res.ccdprepost.atnfcelltypes.list
+```
+
+```{r}
+de.ccdprepost.atnfcelltypes.df <- plyr::ldply(res.ccdprepost.atnfcelltypes.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ccdprepost.atnfcelltypes.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ccdprepost.atnfcelltypes.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(prepost = ifelse(sign(stat) == 1, "PostTx", "PreTx")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, prepost, "Not DE")) %>% 
+         mutate(prepost = fct_relevel(prepost, c("PreTx", "PostTx"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = prepostColVec, limits = c("PreTx", "PostTx")) +
+  scale_fill_manual(values = c(prepostColVec, "Not DE" = "gray50"), limits = c("PreTx", "Not DE", "PostTx"), 
+                    labels = c("PreTx" = "Enriched in PreTx", 
+                               "Not DE" = "Not DE", 
+                               "PostTx" = "Enriched in PostTx")) +
+  scale_size_continuous(range = c(2,6)) +
+  facet_wrap(~annotation, scales = "free", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ccdprepost.atnfcelltypes.df, "out/deseq2/DE__cCDPostvsPre_atnfcelltypes.csv")
+```
+
+### GSEA
+
+```{r}
+ranks.ccdprepost.atnfcelltypes.list <- lapply(res.ccdprepost.atnfcelltypes.list, function(this.res){
+  these.ranks <- this.res %>% 
+    arrange(stat) %>% 
+    pull(stat, gene)
+  
+  length(these.ranks) %>% print
+  
+  these.ranks %>% head %>% print
+  message("\n")
+  
+  these.ranks %>% tail %>% print
+  message("\n")
+  
+  return(these.ranks)
+})
+```
+
+```{r}
+set.seed(thisseed)
+
+fgseaRes.ccdprepost.atnfcelltypes.list <- lapply(ranks.ccdprepost.atnfcelltypes.list, function(this.rank) {
+  this.fgsea <- fgsea(pathways=pathways, stats=this.rank, nPermSimple = 1e3, minSize = 15, maxSize = 100)
+  
+  this.fgsea <- this.fgsea %>% 
+    mutate(pathway = str_remove(pathway, "REACTOME_")) %>% 
+    mutate(pathway = str_replace_all(pathway, "_", " ")) %>% 
+    rowwise %>% 
+    mutate(leadingEdgeNum = length(leadingEdge)) %>% 
+    mutate(Genes = paste(unlist(leadingEdge), collapse = " ")) %>% 
+    ungroup %>% 
+    select(-leadingEdge)
+  
+  this.fgsea %>% arrange(padj) %>% print
+  
+  return(this.fgsea)
+})
+```
+
+```{r}
+fgseaRes.ccdprepost.atnfcelltypes.df <- plyr::ldply(fgseaRes.ccdprepost.atnfcelltypes.list, .id = "annotation") %>% arrange(padj)
+fgseaRes.ccdprepost.atnfcelltypes.df
+```
+
+
+```{r, fig.height=12, fig.width=20}
+fgseaRes.ccdprepost.atnfcelltypes.df %>% 
+  mutate(prepost = ifelse(sign(NES) == 1, "PostTx", "PreTx")) %>% 
+  mutate(prepost = fct_relevel(prepost, c("PreTx", "PostTx"))) %>% 
+  mutate(NES = ifelse(sign(NES) == -1, -NES, NES)) %>% 
+  filter(padj <= 0.05) %>% 
+  group_by(annotation, prepost) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  ungroup %>% 
+  mutate(pathway = str_wrap(pathway, width = 35)) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_viridis_c(option = "turbo") +
+  geom_text(size = 2, fontface="bold", hjust=1, aes(label = str_wrap(Genes, 60), x = NES-0.01)) +
+  facet_wrap(annotation~prepost, scales = "free", nrow = 2) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold"),
+    strip.background = element_rect(linewidth = 2),
+    strip.text = element_text(size = 16, face = "bold")
+  )
+```
+
+
+```{r}
+write_csv(fgseaRes.ccdprepost.atnfcelltypes.df, "out/gsea/GSEA__cCDPostvsPre_atnfcelltypes.csv")
+```
+
+# UC NOA vs. aTNF
+
+```{r}
+seuobj.ucnoa <- subset(seuobj, subset = diagSub == "UC" & timepoint == "T0" & antitnf_response %in% c("NOA", "FR", "PR", "NR"))
+seuobj.ucnoa
+```
+
+```{r}
+seuobj.ucnoa <- AddMetaData(seuobj.ucnoa,
+                             seuobj.ucnoa@meta.data %>%
+                               rownames_to_column("barcode") %>%
+                               mutate(atnf = ifelse(antitnf_response == "NOA", "NOA", as.character(antitnf_response))) %>% 
+                               mutate(atnf = ifelse(antitnf_response %in% c("FR", "PR", "NR"), "aTNF", as.character(antitnf_response))) %>% 
+                               mutate(atnf = fct_relevel(atnf, c("NOA", "aTNF"))) %>% 
+                               column_to_rownames("barcode") %>%
+                               droplevels
+)
+
+seuobj.ucnoa
+seuobj.ucnoa$atnf %>% levels
+
+```
+
+```{r}
+sample.ucnoa.df <- seuobj.ucnoa@meta.data %>% distinct(visit, .keep_all = T)
+table(sample.ucnoa.df$atnf, sample.ucnoa.df$version_10x)
+```
+
+## All Celltypes
+
+```{r}
+annos.ucnoa.celltypes <- list(
+  ColEpi = c("ColEpi"),
+  Stroma = c("Stroma"),
+  Myeloid = c("Myeloid"),
+  Plasma = c("Plasma"),
+  BCell = c("BCell"),
+  TNKILC = c("TNKILC")
+)
+annos.ucnoa.celltypes
+```
+
+### Differential Expression
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ucnoa.celltypes.list <- lapply(names(annos.ucnoa.celltypes), function(anno){
+  thisobj <- subset(seuobj.ucnoa, subset = celltype %in% annos.ucnoa.celltypes[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$atnf <- paste0("_", thisobj$atnf)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+  
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                                assays = "RNA", return.seurat = T, group.by = c("biopsy", "atnf", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+  
+  aggobj$anno <- anno
+  
+  aggobj$atnf <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$atnf <- fct_relevel(aggobj$atnf, c("NOA", "aTNF"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+  
+  return(aggobj)
+})
+
+names(pbulk.ucnoa.celltypes.list) <- names(annos.ucnoa.celltypes)
+
+pbulk.ucnoa.celltypes.list
+```
+
+```{r}
+lapply(pbulk.ucnoa.celltypes.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ucnoa.celltypes.list, function(x) x@meta.data$atnf %>% table)
+```
+
+```{r}
+min.samples <- 6 
+for (anno in names(pbulk.ucnoa.celltypes.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ucnoa.celltypes.list[[anno]], slot = "counts") >= min.counts.ct) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ucnoa.celltypes.list.filt <- lapply(pbulk.ucnoa.celltypes.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.ct) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ucnoa.celltypes.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ucnoa.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ucnoa.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ucnoa.celltypes.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + atnf)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ucnoa.celltypes.list <- lapply(names(pbulk.ucnoa.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ucnoa.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ucnoa.celltypes.list.filt[[anno]]@meta.data, 
+                                  design = ~ version_10x + atnf)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("atnf","aTNF","NOA"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("atnf","aTNF","NOA"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ucnoa.celltypes.list) <- names(pbulk.ucnoa.celltypes.list.filt)
+```
+
+```{r}
+res.ucnoa.celltypes.list
+```
+
+
+```{r}
+de.ucnoa.celltypes.df <- plyr::ldply(res.ucnoa.celltypes.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ucnoa.celltypes.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ucnoa.celltypes.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(atnf = ifelse(sign(stat) == 1, "aTNF", "NOA")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, atnf, "Not DE")) %>% 
+         mutate(atnf = fct_relevel(atnf, c("NOA", "aTNF"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = c(atnfColVec, "Not DE" = "gray50", "aTNF" = colUC), limits = c("NOA", "aTNF")) +
+  scale_fill_manual(values = c(atnfColVec, "Not DE" = "gray50", "aTNF" = colUC), limits = c("NOA", "Not DE", "aTNF"), 
+                    labels = c("NOA" = "Enriched in NOA", 
+                               "Not DE" = "Not DE", 
+                               "aTNF" = "Enriched in aTNF")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 2) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ucnoa.celltypes.df, "out/deseq2/DE__UCaTNFvsNOA_celltypes.csv")
+```
+
+### GSEA
+
+
+```{r}
+ranks.ucnoa.celltypes.list <- lapply(res.ucnoa.celltypes.list, function(this.res){
+  these.ranks <- this.res %>% 
+    arrange(stat) %>% 
+    pull(stat, gene)
+  
+  length(these.ranks) %>% print
+  
+  these.ranks %>% head %>% print
+  message("\n")
+  
+  these.ranks %>% tail %>% print
+  message("\n")
+  
+  return(these.ranks)
+})
+```
+
+```{r}
+set.seed(thisseed)
+
+fgseaRes.ucnoa.celltypes.list <- lapply(ranks.ucnoa.celltypes.list, function(this.rank) {
+  this.fgsea <- fgsea(pathways=pathways, stats=this.rank, nPermSimple = 1e3, minSize = 15, maxSize = 100, )
+  
+  this.fgsea <- this.fgsea %>% 
+    mutate(pathway = str_remove(pathway, "REACTOME_")) %>% 
+    mutate(pathway = str_replace_all(pathway, "_", " ")) %>% 
+    rowwise %>% 
+    mutate(leadingEdgeNum = length(leadingEdge)) %>% 
+    mutate(Genes = paste(unlist(leadingEdge), collapse = " ")) %>% 
+    ungroup %>% 
+    select(-leadingEdge)
+  
+  this.fgsea %>% arrange(padj) %>% print
+  
+  return(this.fgsea)
+})
+```
+
+```{r}
+fgseaRes.ucnoa.celltypes.df <- plyr::ldply(fgseaRes.ucnoa.celltypes.list, .id = "annotation") %>% arrange(padj)
+fgseaRes.ucnoa.celltypes.df
+```
+
+
+```{r, fig.height=24, fig.width=20}
+fgseaRes.ucnoa.celltypes.df %>% 
+  mutate(atnf = ifelse(sign(NES) == 1, "aTNF", "NOA")) %>% 
+  mutate(atnf = fct_relevel(atnf, c("NOA", "aTNF"))) %>% 
+  mutate(NES = ifelse(sign(NES) == -1, -NES, NES)) %>% 
+  filter(padj <= 0.05) %>% 
+  group_by(annotation, atnf) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  ungroup %>% 
+  mutate(pathway = str_wrap(pathway, width = 35)) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_viridis_c(option = "turbo") +
+  geom_text(size = 2, fontface="bold", hjust=1, aes(label = str_wrap(Genes, 60), x = NES-0.01)) +
+  facet_wrap(atnf~annotation, scales = "free", ncol = 3) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold"),
+    strip.background = element_rect(linewidth = 2),
+    strip.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r}
+write_csv(fgseaRes.ucnoa.celltypes.df, "out/gsea/GSEA__UCaTNFvsNOA_celltypes.csv")
+```
+
+# UC NR vs. PR
+
+```{r}
+seuobj.ucprnr <- subset(seuobj, subset = diagSub == "UC" & timepoint == "T0" & antitnf_response %in% c("PR", "NR"))
+seuobj.ucprnr
+```
+
+```{r}
+sample.ucprnr.df <- seuobj.ucprnr@meta.data %>% distinct(visit, .keep_all = T)
+table(sample.ucprnr.df$antitnf_response, sample.ucprnr.df$version_10x)
+```
+
+## All Celltypes
+
+```{r}
+annos.ucprnr.celltypes <- list(
+  ColEpi = c("ColEpi"),
+  Stroma = c("Stroma"),
+  Myeloid = c("Myeloid"),
+  Plasma = c("Plasma"),
+  BCell = c("BCell"),
+  TNKILC = c("TNKILC")
+)
+annos.ucprnr.celltypes
+```
+
+### Differential Expression
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ucprnr.celltypes.list <- lapply(names(annos.ucprnr.celltypes), function(anno){
+  thisobj <- subset(seuobj.ucprnr, subset = celltype %in% annos.ucprnr.celltypes[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$antitnf_response <- paste0("_", thisobj$antitnf_response)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+  
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                                assays = "RNA", return.seurat = T, group.by = c("biopsy", "antitnf_response", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+  
+  aggobj$anno <- anno
+  
+  aggobj$antitnf_response <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$antitnf_response <- fct_relevel(aggobj$antitnf_response, c("PR", "NR"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+  
+  return(aggobj)
+})
+
+names(pbulk.ucprnr.celltypes.list) <- names(annos.ucprnr.celltypes)
+
+pbulk.ucprnr.celltypes.list
+```
+
+```{r}
+lapply(pbulk.ucprnr.celltypes.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ucprnr.celltypes.list, function(x) x@meta.data$antitnf_response %>% table)
+```
+
+```{r}
+min.samples <- 4
+for (anno in names(pbulk.ucprnr.celltypes.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ucprnr.celltypes.list[[anno]], slot = "counts") >= min.counts.ct) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ucprnr.celltypes.list.filt <- lapply(pbulk.ucprnr.celltypes.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.ct) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ucprnr.celltypes.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ucprnr.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ucprnr.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ucprnr.celltypes.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + antitnf_response)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ucprnr.celltypes.list <- lapply(names(pbulk.ucprnr.celltypes.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ucprnr.celltypes.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ucprnr.celltypes.list.filt[[anno]]@meta.data, 
+                                  design = ~ antitnf_response)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("antitnf_response","NR","PR"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("antitnf_response","NR","PR"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ucprnr.celltypes.list) <- names(pbulk.ucprnr.celltypes.list.filt)
+```
+
+```{r}
+res.ucprnr.celltypes.list
+```
+
+```{r}
+de.ucprnr.celltypes.df <- plyr::ldply(res.ucprnr.celltypes.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ucprnr.celltypes.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ucprnr.celltypes.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(antitnf_response = ifelse(sign(stat) == 1, "NR", "PR")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, antitnf_response, "Not DE")) %>% 
+         mutate(antitnf_response = fct_relevel(antitnf_response, c("PR", "NR"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = c(atnfColVec, "Not DE" = "gray50"), limits = c("PR", "NR")) +
+  scale_fill_manual(values = c(atnfColVec, "Not DE" = "gray50"), limits = c("PR", "Not DE", "NR"), 
+                    labels = c("PR" = "Enriched in PR", 
+                               "Not DE" = "Not DE", 
+                               "NR" = "Enriched in NR")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 2) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ucprnr.celltypes.df, "out/deseq2/DE__UCNRvsPR_celltypes.csv")
+```
+
+### GSEA
+
+
+```{r}
+ranks.ucprnr.celltypes.list <- lapply(res.ucprnr.celltypes.list, function(this.res){
+  these.ranks <- this.res %>% 
+    arrange(stat) %>% 
+    pull(stat, gene)
+  
+  length(these.ranks) %>% print
+  
+  these.ranks %>% head %>% print
+  message("\n")
+  
+  these.ranks %>% tail %>% print
+  message("\n")
+  
+  return(these.ranks)
+})
+```
+
+```{r}
+set.seed(thisseed)
+
+fgseaRes.ucprnr.celltypes.list <- lapply(ranks.ucprnr.celltypes.list, function(this.rank) {
+  this.fgsea <- fgsea(pathways=pathways, stats=this.rank, nPermSimple = 1e3, minSize = 15, maxSize = 100, )
+  
+  this.fgsea <- this.fgsea %>% 
+    mutate(pathway = str_remove(pathway, "REACTOME_")) %>% 
+    mutate(pathway = str_replace_all(pathway, "_", " ")) %>% 
+    rowwise %>% 
+    mutate(leadingEdgeNum = length(leadingEdge)) %>% 
+    mutate(Genes = paste(unlist(leadingEdge), collapse = " ")) %>% 
+    ungroup %>% 
+    select(-leadingEdge)
+  
+  this.fgsea %>% arrange(padj) %>% print
+  
+  return(this.fgsea)
+})
+```
+
+```{r}
+fgseaRes.ucprnr.celltypes.df <- plyr::ldply(fgseaRes.ucprnr.celltypes.list, .id = "annotation") %>% arrange(padj)
+fgseaRes.ucprnr.celltypes.df
+```
+
+
+```{r, fig.height=24, fig.width=20}
+fgseaRes.ucprnr.celltypes.df %>% 
+  mutate(antitnf_response = ifelse(sign(NES) == 1, "NR", "PR")) %>% 
+  mutate(antitnf_response = fct_relevel(antitnf_response, c("PR", "NR"))) %>% 
+  mutate(NES = ifelse(sign(NES) == -1, -NES, NES)) %>% 
+  filter(padj <= 0.05) %>% 
+  group_by(annotation, antitnf_response) %>% 
+  slice_min(order_by = padj, n = 5) %>%
+  ungroup %>% 
+  mutate(pathway = str_wrap(pathway, width = 35)) %>%
+  ggplot(aes(y = reorder(pathway, NES), x = NES)) +
+  geom_col(aes(fill=-log10(padj)), col = "black", lwd = 1.25) +
+  scale_fill_viridis_c(option = "turbo") +
+  geom_text(size = 2, fontface="bold", hjust=1, aes(label = str_wrap(Genes, 60), x = NES-0.01)) +
+  facet_wrap(antitnf_response~annotation, scales = "free", ncol = 3) +
+  labs(
+    y=NULL, 
+    fill = "Adjusted\nPvalue\n(-Log10)",
+    x="Normalized Enrichment Score",
+  ) +
+  theme_classic() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 16, face = "bold", vjust = 0.75),
+    legend.text = element_text(size = 16, face = "bold"),
+    strip.background = element_rect(linewidth = 2),
+    strip.text = element_text(size = 16, face = "bold")
+  )
+```
+
+```{r}
+write_csv(fgseaRes.ucprnr.celltypes.df, "out/gsea/GSEA__UCNRvsPR_celltypes.csv")
+```
+
+
+## IBD-Associated
+
+```{r}
+annos.ucprnr.ibdassoc <- list(
+  IBDAssocEpi = c("Inflm. Col.", "Inflm. Gob", "CCL24+ Gob.", "LGR5+ Epi.", "SAA+ Epi."),
+  IBDAssocFibro = c("TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  IBDAssocMonoMac = c("Inflm. Mac", "MNP")
+)
+
+annos.ucprnr.ibdassoc
+```
+
+### Differential Expression
+
+```{r}
+# pseudobulk the counts based on donor-condition-annotation
+pbulk.ucprnr.ibdassoc.list <- lapply(names(annos.ucprnr.ibdassoc), function(anno){
+  thisobj <- subset(seuobj.ucprnr, subset = cellstate %in% annos.ucprnr.ibdassoc[[anno]])
+  
+  # ensure enough cells in sample
+  cellcounts <- thisobj$biopsy %>% droplevels %>% table
+  samplesToKeep <- cellcounts[cellcounts > 10] %>% names
+  
+  count.df <- thisobj$biopsy %>% droplevels %>% table %>% data.frame()
+  colnames(count.df) <- c("biopsy", "cellcount")
+  
+  thisobj$antitnf_response <- paste0("_", thisobj$antitnf_response)
+  thisobj$version_10x <- paste0("_", thisobj$version_10x)
+  
+  
+  aggobj <- AggregateExpression(subset(thisobj, subset = biopsy %in% samplesToKeep), slot = "counts",
+                                assays = "RNA", return.seurat = T, group.by = c("biopsy", "antitnf_response", "version_10x"))
+  
+  aggobj$biopsy <- str_split(colnames(aggobj), "__", simplify = T)[,1]
+  
+  aggobj <- AddMetaData(aggobj,
+                        left_join(aggobj@meta.data %>%
+                                    rownames_to_column("rowname"),
+                                  count.df,
+                                  by = "biopsy") %>%
+                          column_to_rownames("rowname"))
+  
+  aggobj$anno <- anno
+  
+  aggobj$antitnf_response <- str_split(colnames(aggobj), "__", simplify = T)[,2]
+  aggobj$antitnf_response <- fct_relevel(aggobj$antitnf_response, c("PR", "NR"))
+  
+  aggobj$version_10x <- str_split(colnames(aggobj), "__", simplify = T)[,3]
+  aggobj$version_10x <- fct_relevel(aggobj$version_10x, c("v1", "v2"))  
+  
+  return(aggobj)
+})
+
+names(pbulk.ucprnr.ibdassoc.list) <- names(annos.ucprnr.ibdassoc)
+
+pbulk.ucprnr.ibdassoc.list
+```
+
+```{r}
+lapply(pbulk.ucprnr.ibdassoc.list, function(x) x@meta.data)
+```
+
+```{r}
+lapply(pbulk.ucprnr.ibdassoc.list, function(x) x@meta.data$antitnf_response %>% table)
+```
+
+```{r}
+min.samples <- 3
+for (anno in names(pbulk.ucprnr.ibdassoc.list)){
+  geneNum <- (rowSums(GetAssayData(pbulk.ucprnr.ibdassoc.list[[anno]], slot = "counts") >= min.counts.cst) >= min.samples) %>% sum
+  message(sprintf("# Genes in %s: %i", anno, geneNum))
+}
+```
+
+```{r}
+pbulk.ucprnr.ibdassoc.list.filt <- lapply(pbulk.ucprnr.ibdassoc.list, function(anno){
+  genesToKeep <- rownames(anno)[(rowSums(GetAssayData(anno, slot = "counts") >= min.counts.cst) >= min.samples)]
+  genesToKeepFiltered <- FeaturesFilter(features = genesToKeep, removeTR = T, removeIG = T, removeMito = T, removeRibo = T)
+  group.filt <- anno[c(genesToKeepFiltered)]
+  return(group.filt)
+})
+pbulk.ucprnr.ibdassoc.list.filt
+```
+
+```{r}
+# check 10x version PCA
+lapply(names(pbulk.ucprnr.ibdassoc.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ucprnr.ibdassoc.list.filt[[anno]]@assays$RNA@counts), 
+                                        colData = pbulk.ucprnr.ibdassoc.list.filt[[anno]]@meta.data, 
+                                        design = ~ version_10x + antitnf_response)
+  ddsSE <- vst(ddsSE)
+
+  plotPCA(ddsSE, intgroup=c("version_10x")) + ggtitle(anno)
+})
+```
+
+```{r}
+# perform DE and extract results
+res.ucprnr.ibdassoc.list <- lapply(names(pbulk.ucprnr.ibdassoc.list.filt), function(anno){
+  ddsSE <- DESeqDataSetFromMatrix(countData = as.matrix(pbulk.ucprnr.ibdassoc.list.filt[[anno]]@assays$RNA@counts), 
+                                  colData = pbulk.ucprnr.ibdassoc.list.filt[[anno]]@meta.data, 
+                                  design = ~antitnf_response)
+  ddsSE <- DESeq(ddsSE)
+  res.plot <- results(ddsSE, contrast=c("antitnf_response","NR","PR"))
+  
+  rangeVal <- res.plot$log2FoldChange %>% range %>% abs %>% max
+  plotMA(res.plot, ylim = c(-rangeVal, rangeVal), main = anno)
+  
+  res.out <- results(ddsSE, contrast=c("antitnf_response","NR","PR"), tidy=T) %>% dplyr::rename(gene = row) %>% arrange(padj)
+  
+  return(res.out)
+})
+
+names(res.ucprnr.ibdassoc.list) <- names(pbulk.ucprnr.ibdassoc.list.filt)
+```
+
+
+```{r}
+de.ucprnr.ibdassoc.df <- plyr::ldply(res.ucprnr.ibdassoc.list, .id = "annotation") %>% 
+  arrange(pvalue)
+
+de.ucprnr.ibdassoc.df
+```
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ucprnr.ibdassoc.df %>% 
+         mutate(labelname = ifelse(padj <= 0.05, gene, NA)) %>% 
+         mutate(antitnf_response = ifelse(sign(stat) == 1, "NR", "PR")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, antitnf_response, "Not DE")) %>% 
+         mutate(antitnf_response = fct_relevel(antitnf_response, c("PR", "NR"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = c(atnfColVec, "Not DE" = "gray50"), limits = c("PR", "NR")) +
+  scale_fill_manual(values = c(atnfColVec, "Not DE" = "gray50"), limits = c("PR", "Not DE", "NR"), 
+                    labels = c("PR" = "Enriched in PR", 
+                               "Not DE" = "Not DE", 
+                               "NR" = "Enriched in NR")) +
+  scale_size_continuous(range = c(2,2)) +
+  facet_wrap(~annotation, scales = "free", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+```{r}
+write_csv(de.ucprnr.ibdassoc.df, "out/deseq2/DE__UCNRvsPR_IBDAssoc.csv")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

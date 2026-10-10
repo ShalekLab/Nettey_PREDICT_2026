@@ -1,0 +1,696 @@
+---
+title: "Supp Figure 3"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+
+In this notebook, I will create plots for supplemental figure 3
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggpubr)
+library(ggbreak)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colCelltypes <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+celltypes <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+names(colCelltypes) <- celltypes
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+# Cell Frequency
+
+## ColEpi
+
+```{r, fig.width=14, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Colonocyte", "Inflm. Col.", "Goblet", "Inflm. Gob.", "CCL24+ Gob.", "LGR5+ Epi.", "SAA+ Epi."),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.20)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of ColEpi Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["ColEpi"], linewidth = 3),
+  )
+```
+
+## Stroma
+
+```{r, fig.width=9.25, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("ABCA8+ Fibro.", "VSTM2A+ Fibro.", "Myofibro.", "TFPI2Hi Fibro.", "PDPNHi Fibro."),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.2)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Stromal Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Stroma"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=5.5, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Venule", "Cntrct. Peri.", "Remod. Peri."),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.1)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Stromal Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Stroma"], linewidth = 3),
+  )
+```
+
+## Myeloid
+
+```{r, fig.width=5, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Inflm. Mac", "MNP"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.2)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Myeloid Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Myeloid"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=7, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("cDC", "LAMP3+ DC", "pDC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Myeloid Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Myeloid"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=3, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Neutrophil"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Myeloid Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Myeloid"], linewidth = 3),
+  )
+```
+
+## Plasma
+
+```{r, fig.width=7, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("IgA1 PC", "IgA2 PC", "IgG1 PC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.2)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Plasma Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Plasma"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=8, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("IgG2 PC", "IgG3 PC", "IgG4 PC", "IgM PC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 5,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_y_break(c(0.3, 0.75), scale = 0.5) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.25, size = 4.5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.1)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Plasma Cells", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["Plasma"], linewidth = 3),
+    axis.text.y.right = element_blank(),
+    axis.line.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  )
+```
+
+## BCell
+
+
+```{r, fig.width=7, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Atyp. MBC", "GC-like BC", "Prlf. BC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent) +
+  # coord_cartesian(ylim = c(0, 1.2)) +
+  guides(fill = "none") +
+  # guides(color = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of B Cells", 
+    # size = "# Cells", 
+    # title = "Pre-Treatment T Helper Cell Phenotypes", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["BCell"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=3, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Plasmablast"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of B Cells"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["BCell"], linewidth = 3),
+  )
+```
+
+## TNKILC
+
+```{r, fig.width=6, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17", "Treg"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of T/NK/ILCs", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["TNKILC"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=2.75, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_wrap(~cellstate, scales = "free_y", ncol=10) +
+  scale_y_break(c(0.22, 0.4), scale = 0.5) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.2, size = 4.5, label.y = c(0.43, 0.48, 0.53, 0.58)) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.1)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of T/NK/ILCs", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["TNKILC"], linewidth = 3),
+    axis.text.y.right = element_blank(),
+    axis.line.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  )
+```
+```{r, fig.width=2.75, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("IEL"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 4.5) + 
+  scale_y_continuous(labels = percent) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of T/NK/ILCs", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["TNKILC"], linewidth = 3),
+  )
+```
+
+```{r, fig.width=2.75, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Prlf. IEL"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_wrap(~cellstate, scales = "free_y", ncol=10) +
+  scale_y_break(c(0.05, 0.1), scale = 0.5) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.25, size = 4.5,
+                     label.y = c(0.12, 0.14, 0.16, 0.18)) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.05)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of T/NK/ILCs", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["TNKILC"], linewidth = 3),
+    axis.text.y.right = element_blank(),
+    axis.line.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  )
+
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Prlf. Teff"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_wrap(~cellstate, scales = "free_y", ncol=10) +
+  scale_y_break(c(0.05, 0.1), scale = 0.5) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.25, size = 4.5,
+                     label.y = c(0.12, 0.14, 0.16, 0.18)) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.05)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of T/NK/ILCs", 
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = colCelltypes["TNKILC"], linewidth = 3),
+    axis.text.y.right = element_blank(),
+    axis.line.y.right = element_blank(),
+    axis.ticks.y.right = element_blank()
+  )
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,225 @@
+---
+title: "Supplemental Table 8 - HuProt and HLA"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile HuProt autoantigen and HLA allele data into a single Excel file. 
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(stringi)
+library(writexl)
+
+selectedparticipants <- c("001-036_T0", "001-038_T0")
+
+`%notin%` <- Negate(`%in%`)
+```
+
+# Z Scores
+
+## Hits All
+
+```{r}
+huprot.long <- readRDS("out/huprot/huprot__igg_zscorehits_long.rds")
+huprot.long
+```
+
+```{r}
+huprot.igg.hits <- huprot.long %>% 
+  group_by(participant_id) %>% 
+  mutate(hits = sum(zscore > 3)) %>% 
+  ungroup %>% 
+  distinct(participant_id, .keep_all = T) %>% 
+  select(-Antigen:-ID, -zscore)
+
+huprot.igg.hits
+```
+
+## Hits DRB1*15:01
+
+```{r}
+igg.zscore.long <- readRDS("out/huprot/huprot__igg_zscorevalues_long.rds")
+igg.zscore.long
+```
+
+```{r}
+huprot.igg.drb1.exclusive <- igg.zscore.long %>% 
+  filter(Antigen %in% c("ENO1", "MED18", "YWHAQ")) %>% 
+  select(participant_id, diagSub, antitnf_response, Antigen, zscore) %>% 
+  pivot_wider(names_from = Antigen, values_from = zscore)
+
+huprot.igg.drb1.exclusive
+```
+
+
+```{r}
+igg.zscore.wide <- read_csv("out/huprot/huprot__igg_zscorehits_wide.csv")
+igg.zscore.wide
+```
+
+
+```{r}
+igg.1501.order <- igg.zscore.wide %>% 
+  filter(`001-036_T0` > 0 & `001-038_T0` > 0) %>% 
+  pivot_longer(c(-Antigen:-ID), names_to = "visit", values_to = "zscore") %>% 
+  filter(zscore > 0) %>%
+  group_by(Antigen) %>% 
+  mutate(distinct_biopsies = n_distinct(visit), .after = ID) %>% 
+  ungroup %>% 
+  arrange(distinct_biopsies, Antigen)
+
+igg.1501.order
+```
+
+```{r}
+igg.1501.out <- igg.zscore.wide %>% 
+  filter(`001-036_T0` > 0 & `001-038_T0` > 0) %>% 
+  left_join(igg.1501.order %>% 
+              distinct(ID, distinct_biopsies),
+            by = "ID") %>% 
+  relocate(distinct_biopsies, .after = ID) %>% 
+  arrange(distinct_biopsies, ID)
+
+igg.1501.out
+```
+
+
+```{r}
+igg.zscore.1501 <- igg.1501.out %>% 
+  rename_with(.fn = ~str_remove(., "_T0")) %>% 
+  pivot_longer(cols = -c(Antigen:distinct_biopsies), names_to = "participant_id", values_to = "zscore") %>% 
+  group_by(Antigen, participant_id) %>% 
+  mutate(zscore.mean = mean(zscore), .after = zscore) %>%
+  ungroup %>% 
+  distinct(Antigen, participant_id, .keep_all = T) %>% 
+  select(Antigen, participant_id, zscore.mean) %>%
+  arrange(Antigen) %>% 
+  pivot_wider(id_cols = Antigen, names_from = participant_id, values_from = zscore.mean) %>% 
+  mutate(Antigen = fct_relevel(Antigen, igg.1501.order %>% distinct(Antigen) %>% pull(Antigen))) %>% 
+  arrange(Antigen)
+
+igg.zscore.1501
+```
+
+# Combine Lists
+
+```{r}
+huprot.out <- list(
+  "Key" = data.frame(),
+  "Hits By Group" = huprot.igg.hits,
+  "UC HLA-DRB1 1501 Exclusive" = huprot.igg.drb1.exclusive,
+  "UC HLA-DRB1 1501 Hits" = igg.zscore.1501
+)
+  
+
+huprot.out
+```
+
+
+# Read Data
+
+```{r}
+metadata <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+```{r}
+hla.paths <- list.files("out/hla/allele_assigned", full.names = T)
+hla.paths
+
+hla.paths <- hla.paths[str_detect(hla.paths, "Combined", negate = T)]
+hla.paths
+```
+
+```{r}
+hla.names <- str_split(hla.paths, "__", simplify = T)[,2] %>% str_remove(".csv") %>% str_replace("_", "-")
+hla.names
+```
+
+
+```{r}
+hla.list <- lapply(hla.paths, function(thispath) read_csv(thispath, show_col_types = F))
+
+names(hla.list) <- hla.names
+hla.list
+```
+
+Subset to only participants in the colon study
+
+```{r}
+hla.predictCOL <- lapply(hla.list, function(x) {
+  x %>% 
+    filter(participant_id %in% metadata$participant_id) %>% 
+    left_join(., metadata %>% distinct(participant_id, diagSub, antitnf_response)) %>% 
+    relocate(participant_id, diagSub, antitnf_response, Allele1, Allele2)
+  })
+
+hla.predictCOL
+```
+# HLA-DRB1
+
+## Wide Matrix
+
+```{r}
+hla.drb1.out <- rbind(
+  hla.predictCOL$`HLA-DRB1` %>% select(-Allele2) %>%  rename(Allele = Allele1),
+  hla.predictCOL$`HLA-DRB1` %>% select(-Allele1) %>% rename(Allele = Allele2)
+) %>% 
+  arrange(participant_id) %>%
+  count(participant_id, diagSub, antitnf_response, Allele) %>% 
+  pivot_wider(names_from = Allele,
+              values_from = n, 
+              values_fill = list(n = 0)) %>% 
+  rename_with(.fn = ~str_remove(., "HLA-DRB1\\*"))
+
+hla.drb1.out$`09:01` <- 0
+allele.names <- setdiff(colnames(hla.drb1.out), c("participant_id","diagSub","antitnf_response")) %>% sort
+
+hla.drb1.out <- hla.drb1.out %>% 
+  relocate(participant_id:antitnf_response, !!allele.names)
+
+hla.drb1.out
+```
+
+# Combine Lists
+
+```{r}
+hla.out <- list(
+  "HLA-DRB1 Enumerated" = hla.drb1.out
+  ) %>% 
+  append(hla.predictCOL) 
+
+hla.out
+```
+
+# Combine All
+
+```{r}
+joint.out <- c(
+  huprot.out,
+  hla.out
+)
+
+joint.out
+```
+
+
+```{r}
+write_xlsx(joint.out, 
+           path = "out/tables/Supplemental Table 8 - HuProt and HLA.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

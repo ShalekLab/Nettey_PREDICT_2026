@@ -1,0 +1,865 @@
+---
+title: "Supplemental Figure 4"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 4
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+source("../functions/ComparisonPlottingFxns.R")
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+```
+
+# Read Data
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+```
+
+```{r}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+```{r}
+seuobj.tnkilc <- AddMetaData(seuobj.tnkilc, tcrs %>% column_to_rownames("barcode"))
+seuobj.tnkilc@meta.data
+```
+
+# Differential Expression
+
+```{r}
+de.ccduc.thelper.df <- read_csv("out/deseq2/DE__UCvscCD_Thelper.csv")
+de.ccduc.thelper.df
+```
+
+```{r}
+de.ccduc.thelper.range <- de.ccduc.thelper.df$log2FoldChange %>% range %>% abs %>% max %>% ceiling
+de.ccduc.thelper.range <- c(-de.ccduc.thelper.range, de.ccduc.thelper.range)
+de.ccduc.thelper.range
+```
+
+
+```{r, fig.width=16, fig.height=10}
+ggplot(de.ccduc.thelper.df %>% 
+         mutate(labelname = ifelse(padj <= 0.01 | (padj <= 0.05 & abs(log2FoldChange) >= 1), gene, NA)) %>% 
+         mutate(diagSub = ifelse(sign(stat) == 1, "UC", "cCD")) %>% 
+         mutate(pointfill = ifelse(padj <= 0.05, diagSub, "Not DE")) %>% 
+         mutate(diagSub = fct_relevel(diagSub, c("cCD", "UC"))), 
+       aes(x = log2FoldChange, y = -log10(padj), label = labelname)) + 
+  geom_hline(yintercept = -log10(0.05), lty = 2) +
+  geom_vline(xintercept = -1, lty = 2) + 
+  geom_vline(xintercept = 1, lty = 2) +  
+  geom_point(shape = 21, size = 3, color = "black", aes(fill = pointfill)) +
+  geom_label_repel(aes(color = pointfill, size = -log10(padj)), seed = thisseed,
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(color = "black", seed = thisseed, aes(size = -log10(padj)),
+                   fontface = "bold", max.overlaps = 50, alpha=0.75, show.legend = F, label.padding = 0.1, label.size = 0) +
+  scale_color_manual(values = diagSubColVec, limits = c("cCD", "UC")) +
+  scale_fill_manual(values = c(diagSubColVec, "Not DE" = "gray50"), limits = c("cCD", "Not DE", "UC"), 
+                    labels = c("cCD" = "Enriched in cCD", 
+                               "Not DE" = "Not DE", 
+                               "UC" = "Enriched in UC")) +
+  scale_size_continuous(range = c(2,6)) +
+  coord_cartesian(xlim = de.ccduc.thelper.range) +
+  facet_wrap(~annotation, scales = "free", nrow = 1) +
+  labs(
+    color = NULL,
+    fill = NULL,
+    size = "Percent Expression",
+    x = "Average Log2 FC",
+    y = "-Log10 P Value (Adjusted)"
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 24, face = "bold"),
+    legend.position = "top",
+    legend.box = "vertical",
+    strip.text = element_text(size = 30, face = "bold", color="black"),
+    strip.background = element_rect(fill = "white", color="black"),
+    axis.text = element_text(size = 24, face = "bold"),
+    axis.title = element_text(size = 24, face = "bold")
+  ) + 
+  guides(fill = guide_legend(nrow = 1, override.aes = list(size = 8)))
+```
+
+# Gene Expression
+
+```{r, fig.width=9, fig.height=7}
+plot.a <- PlotBoxplotsFeatures(
+  seuobj.tnkilc@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>%  droplevels,
+  seurat = "seuobj.tnkilc",
+  features = c("TOX", "HAVCR2", "TNFRSF4"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(.,
+         aes(x = diagSub, y = meanVal, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 3, color = "black", position = position_jitterdodge(jitter.width = 0.5, seed = thisseed)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  scale_y_continuous(breaks = scales::pretty_breaks(5)) +
+  facet_grid(featureVar~cellstate, scales = "free") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 1.4, size = 5, tip.length = 0.05, bracket.size = 1) +
+  guides(fill = "none") +
+  labs(
+    y = "Mean Gene Expression",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.y = unit(0.5, "cm")
+  )
+
+plot.b <- PlotBoxplotsFeatures(
+  seuobj.tnkilc@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>%  droplevels,
+  seurat = "seuobj.tnkilc",
+  features = c("TNFRSF18", "LAG3", "CD247"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(.,
+         aes(x = diagSub, y = meanVal, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 3, color = "black", position = position_jitterdodge(jitter.width = 0.5, seed = thisseed)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  scale_y_continuous(breaks = scales::pretty_breaks(5)) +
+  facet_grid(featureVar~cellstate, scales = "free") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 1.4, size = 5, tip.length = 0.05, bracket.size = 1) +
+  guides(fill = "none") +
+  labs(
+    y = NULL,
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 20, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    panel.spacing.y = unit(0.5, "cm")
+  )
+
+plot.a + plot.b
+```
+
+```{r, fig.width=6, fig.height=13}
+PlotBoxplotsFeatures(
+  seuobj.tnkilc@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>%  droplevels,
+  seurat = "seuobj.tnkilc",
+  features = c("IFNG", "TNF", "ANXA1", "CXCR3", "GZMK"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17", "Prlf. Teff"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(.,
+         aes(x = diagSub, y = meanVal, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 3, color = "black", position = position_jitterdodge(jitter.width = 0.5)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  scale_y_continuous(breaks = scales::pretty_breaks(5)) +
+  facet_grid(featureVar~cellstate, scales = "free") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 1.5, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  guides(fill = "none") +
+  labs(
+    y = "Mean Gene Expression",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+
+```{r, fig.width=6, fig.height=13}
+PlotBoxplotsFeatures(
+  seuobj.tnkilc@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>%  droplevels,
+  seurat = "seuobj.tnkilc",
+  features = c("IL17A", "IL17F", "IL22", "IL26", "GNLY"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17", "Prlf. Teff"),
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(.,
+         aes(x = diagSub, y = meanVal, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 3, color = "black", position = position_jitterdodge(jitter.width = 0.5)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  scale_y_continuous(breaks = scales::pretty_breaks(5)) +
+  facet_grid(featureVar~cellstate, scales = "free") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 1.5, size = 5.5, tip.length = 0.05, bracket.size = 1) +
+  guides(fill = "none") +
+  labs(
+    y = "Mean Gene Expression",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# UMAPs
+
+```{r, fig.width=5, fig.height=5}
+FeaturePlot(seuobj.tnkilc, cells = seuobj.tnkilc@meta.data %>% filter(tgroup == "CD4T" & diagSub %in% c("cCD", "UC") & timepoint == "T0") %>% rownames, 
+            features = c("CD8A")) +
+  scale_color_viridis_c(option = "magma") +
+  coord_cartesian(xlim = c(5.5,13), ylim = c(1,7.5)) +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "CD8A Gene Expression"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold"),
+    legend.position = c(0.025, 0.18), 
+    legend.text = element_text(size = 12)
+  )
+```
+
+```{r}
+th17.barcodes <- seuobj.tnkilc@meta.data %>% 
+  filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB) & timepoint == "T0" & diagSub %in% c("cCD", "UC") & cellstate == "Th17") %>% 
+  rownames
+
+th17.barcodes %>% length
+```
+
+```{r}
+seuobj.th17 <- subset(seuobj.tnkilc, cells = th17.barcodes)
+seuobj.th17
+```
+
+```{r}
+seuobj.th17 <- FindNeighbors(seuobj.th17, reduction = "X_scVI", dims = 1:30, k.param = 20)
+seuobj.th17 <- RunUMAP(object = seuobj.th17, reduction = "X_scVI", dims = 1:30, n.neighbors = 20, min.dist = 0.3, spread = 1)
+```
+
+```{r, fig.width=5.5, fig.height=5}
+FeaturePlot(seuobj.th17, reduction = "umap", features = c("CD4"), pt.size = 1.5) +
+  scale_color_viridis_c(option = "magma") +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "CD4 Gene Expression in Th17 Cells"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12)
+  )
+```
+
+```{r, fig.width=5.5, fig.height=5}
+FeaturePlot(seuobj.th17, reduction = "umap", features = c("CD8A"), pt.size = 1.5) +
+  scale_color_viridis_c(option = "magma") +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "CD8A Gene Expression in Th17 Cells"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12)
+  )
+```
+
+```{r, fig.width=5.5, fig.height=5}
+FeaturePlot(seuobj.th17, reduction = "umap", features = c("IL17A"), pt.size = 1.5) +
+  scale_color_viridis_c(option = "magma") +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "IL17A Gene Expression in Th17 Cells"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.text = element_text(size = 12)
+  )
+```
+
+# Clonal Overlap
+
+## UMAPs
+
+```{r, fig.width=5, fig.height=5}
+seuobj.tnkilc$cellstate.plot <- ifelse(seuobj.tnkilc$cellstate %in% c("Th1", "Th17", "Prlf. Teff"),
+                                       as.character(seuobj.tnkilc$cellstate), "Other CD4T") %>% 
+  fct_relevel(., c("Th1", "Th17", "Prlf. Teff", "Other CD4T"))
+DimPlot(seuobj.tnkilc, cells = seuobj.tnkilc@meta.data %>% 
+          rownames_to_column("barcode") %>% 
+          filter(timepoint == "T0" & diagSub %in% c("cCD", "UC") & tgroup == "CD4T") %>% 
+          pull(barcode), raster = T, 
+        group.by = "cellstate.plot", 
+        cols = c(RColorBrewer::brewer.pal(12, "Paired")[c(2,4,12)], "gray90")) + ggtitle(label = NULL) +
+  coord_cartesian(xlim = c(5.5,13), ylim = c(1,7.5)) +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "CD4 T Cell States"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold"),
+    legend.position = c(0, 0.125), 
+    legend.text = element_text(size = 11),
+    legend.background = element_rect(fill = NA)
+  )
+```
+
+```{r}
+shared.prlf.th.df <- read_csv("out/tcr/clonaloverlap/ccduc_th1th17prlfteff_shared.csv")
+shared.prlf.th.df
+```
+
+
+## Bar Graphs
+
+```{r, fig.width=3.5, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj.th17@meta.data %>% filter(!is.na(cdr3.TRA) & !is.na(cdr3.TRB) & timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>% 
+    droplevels,
+  seurat = "seuobj.th17",
+  features = c("CD8A"),
+  relative.to = "cellstate",
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(percentVal, na.rm = T)) %>% 
+  mutate(se = sd(percentVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = diagSub, y = percentVal, color = diagSub, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 4, color = "black", position = position_jitterdodge(jitter.width = 0.5)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=0.4, position = position_jitterdodge(jitter.width = 0)) +
+  scale_y_continuous(labels = percent, breaks = pretty_breaks(6)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 2, size = 5, tip.length = 0.05, bracket = 1) +
+  guides(fill = "none") +
+  labs(
+    y = "% of Th17 Cells\nwith CD8A Detected",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r}
+shared.prlf.ccd.fisher <- shared.prlf.th.df %>% 
+  filter(diagSub == "cCD") %>% 
+  pivot_longer(ends_with("Overlap"), 
+               names_to = "Overlap_CellState", 
+               names_transform =  ~str_remove(., pattern = "_Overlap"),
+               values_to = "Clonal_Overlap"
+  ) %>% 
+  select(Overlap_CellState, Clonal_Overlap) %>% 
+  droplevels %>% 
+  table
+
+shared.prlf.ccd.fisher
+
+shared.prlf.ccd.fisher[c(1,2),] %>% fisher.test
+shared.prlf.ccd.fisher[c(2,1),] %>% fisher.test
+```
+
+```{r}
+shared.prlf.uc.fisher <- shared.prlf.th.df %>% 
+  filter(diagSub == "UC") %>% 
+  pivot_longer(ends_with("Overlap"), 
+               names_to = "Overlap_CellState", 
+               names_transform =  ~str_remove(., pattern = "_Overlap"),
+               values_to = "Clonal_Overlap"
+  ) %>% 
+  select(Overlap_CellState, Clonal_Overlap) %>% 
+  droplevels %>% 
+  table
+
+shared.prlf.uc.fisher
+
+shared.prlf.uc.fisher[c(1,2),] %>% fisher.test
+shared.prlf.uc.fisher[c(2,1),] %>% fisher.test
+```
+
+```{r, fig.width=6, fig.height=5}
+th1th17.prlf.annotation <- data.frame(
+  diagSub = c("cCD", "UC"),
+  label = c(
+    paste("p =", signif(shared.prlf.ccd.fisher %>% fisher.test %>% .$p.value,2)), 
+    paste("p =", signif(shared.prlf.uc.fisher %>% fisher.test %>% .$p.value,2))
+  ),
+  x     = c(1.5, 1.5),
+  y     = c(0.225, 0.225)
+)
+th1th17.prlf.annotation
+
+shared.prlf.th.df %>% 
+  group_by(diagSub) %>% 
+  mutate(n_shared.th1 = sum(Th1_Overlap)) %>% 
+  mutate(n_unshared.th1 = sum(!Th1_Overlap)) %>% 
+  mutate(prop.th1 = n_shared.th1/(n_shared.th1+n_unshared.th1)) %>% 
+  mutate(shared.label.th1 = paste0(n_shared.th1, "/", n_shared.th1+n_unshared.th1)) %>% 
+  mutate(n_shared.th17 = sum(Th17_Overlap)) %>% 
+  mutate(n_unshared.th17 = sum(!Th17_Overlap)) %>% 
+  mutate(prop.th17 = n_shared.th17/(n_shared.th17+n_unshared.th17)) %>% 
+  mutate(shared.label.th17 = paste0(n_shared.th17, "/", n_shared.th17+n_unshared.th17)) %>% 
+  ungroup %>% 
+  distinct(diagSub, .keep_all = T) %>% 
+  select(diagSub, ends_with(c(".th1", ".th17"))) %>% 
+  pivot_longer(cols = c(prop.th1, prop.th17), names_to = "cellstate", values_to = "prop") %>% 
+  mutate(cellstate = case_when(
+    cellstate == "prop.th1" ~ "Th1",
+    cellstate == "prop.th17" ~ "Th17"
+  )) %>% 
+  mutate(shared.label = case_when(
+    cellstate == "Th1" ~ paste0(n_shared.th1, "/", n_shared.th1+n_unshared.th1),
+    cellstate == "Th17" ~ paste0(n_shared.th17, "/", n_shared.th17+n_unshared.th17),
+  )) %>% 
+  # mutate(facetName = "Th17 and Prlf. Teff") %>% 
+  ggplot(aes(x = cellstate, y = prop, fill = diagSub)) + 
+  geom_col(color = "black", lwd = 1) + 
+  geom_text(aes(y = prop, label = shared.label), color = "black",
+            size = 6, fontface = "bold", vjust = -.2) +
+  geom_text(data = th1th17.prlf.annotation, mapping = aes(x = x, y = y, label = label), size = 6) +
+  facet_grid(~diagSub) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.05), limits = c(0,0.225)) +
+  labs(
+    fill = NULL,
+    y = "% of Prlf. Teff Cells\nwith Clonal Overlap",
+  ) +
+  theme_light() + 
+  theme(
+    legend.position = "none",
+    legend.text = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    text = element_text(size = 16, face = "bold"),
+    axis.text.x = element_text(size = 20, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    strip.background = element_rect(fill = NA, color = "black"),
+    strip.text = element_text(size = 20, face = "bold", color = "black")
+  )
+```
+
+```{r}
+cd8.th17.df <- read_csv("out/tcr/clonaloverlap/ccduc_cd8th17_prlfteffoverlap.csv")
+cd8.th17.df
+```
+
+```{r}
+shared.cd8.fisher.pos <- cd8.th17.df %>% 
+  filter(CD8A == "CD8A+") %>% 
+  select(diagSub, `Prlf. Teff_Overlap`) %>% 
+  droplevels %>% 
+  table
+
+shared.cd8.fisher.pos
+
+shared.cd8.fisher.pos[c(1,2),] %>% fisher.test
+shared.cd8.fisher.pos[c(2,1),] %>% fisher.test
+```
+
+
+```{r}
+shared.cd8.fisher.neg <- cd8.th17.df %>% 
+  filter(CD8A == "CD8A-") %>% 
+  select(diagSub, `Prlf. Teff_Overlap`) %>% 
+  droplevels %>% 
+  table
+
+shared.cd8.fisher.neg
+
+shared.cd8.fisher.neg[c(1,2),] %>% fisher.test
+shared.cd8.fisher.neg[c(2,1),] %>% fisher.test
+```
+
+
+```{r, fig.width=6, fig.height=5}
+negpos.cd8.annotation <- data.frame(
+  CD8A = c("CD8A-", "CD8A+"),
+  label = c(
+    paste("p =", signif(shared.cd8.fisher.neg %>% fisher.test %>% .$p.value,2)), 
+    paste("p =", signif(shared.cd8.fisher.pos %>% fisher.test %>% .$p.value,2))
+  ),
+  x     = c(1.5, 1.5),
+  y     = c(0.175, 0.175),
+  diagSub = c(NA, NA)
+)
+negpos.cd8.annotation
+
+cd8.th17.df %>% 
+  group_by(diagSub, CD8A, .drop = FALSE) %>%
+  mutate(n_present = sum(`Prlf. Teff_Overlap`), n_absent = sum(!`Prlf. Teff_Overlap`)) %>% 
+  mutate(prop = n_present/n()) %>%
+  mutate(shared.label = paste0(n_present, "/", n())) %>% 
+  ungroup() %>%
+  distinct(diagSub, CD8A, prop, shared.label) %>% 
+  ggplot(aes(x = diagSub, y = prop, fill = diagSub)) + 
+  geom_col(color = "black", lwd = 1) + 
+  geom_text(aes(y = prop, label = shared.label), color = "black",
+            size = 6, fontface = "bold", vjust = -.2) +
+  geom_text(data = negpos.cd8.annotation, mapping = aes(x = x, y = y, label = label), size = 6) +
+  facet_grid(~CD8A) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.05), limits = c(0,0.175)) +
+  labs(
+    fill = NULL,
+    y = "% of Th17 Cells with\nPrlf. Teff Clonal Overlap",
+    # title = "Thelper and Tfh\nClonal Overlap"
+  ) +
+  theme_light() + 
+  theme(
+    legend.position = "none",
+    legend.text = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    text = element_text(size = 16, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+    strip.background = element_rect(fill = NA, color = "black"),
+    strip.text = element_text(size = 20, face = "bold", color = "black")
+  )
+```
+
+## GGraph UMAPs
+
+```{r}
+umap.tnkilc <- read_csv("out/dimred/umap/predictCOL__CB_TNKILC_umap.csv")
+umap.tnkilc
+```
+
+```{r}
+cd4t.df <- seuobj.tnkilc@meta.data %>% 
+  rownames_to_column("barcode") %>% 
+  filter(tgroup == "CD4T" & diagSub %in% c("cCD", "UC") & timepoint == "T0" & !is.na(cdr3.TRA) & !is.na(cdr3.TRB)) %>% 
+  select(barcode, cellstate, diagSub, antitnf_response, timepoint) %>% 
+  left_join(., umap.tnkilc, by = "barcode") %>% 
+  arrange(cellstate)
+
+cd4t.df
+```
+
+```{r}
+shared.th1.network <- read_csv("out/tcr/clonaloverlap/ccduc_th1prlfteff_network.csv")
+shared.th1.network
+
+shared.th17.network <- read_csv("out/tcr/clonaloverlap/ccduc_th17prlfteff_network.csv")
+shared.th17.network
+```
+
+
+
+```{r}
+list.prlf.th1.th1 <- shared.th1.network$barcode_Th1 %>% str_split("___")
+list.prlf.th1.prlf <- shared.th1.network$`barcode_Prlf. Teff` %>% str_split("___")
+vec.prlf.th1.diagSub <- shared.th1.network$diagSub
+edges.prlf.th1 <- data.frame()
+for (x in 1:nrow(shared.th1.network)){
+  edges.prlf.th1 <- rbind(edges.prlf.th1, expand.grid(
+    list.prlf.th1.th1[[x]], 
+    list.prlf.th1.prlf[[x]], 
+    vec.prlf.th1.diagSub[[x]]))
+}
+
+edges.prlf.th1 <- edges.prlf.th1 %>% 
+  rowwise %>% 
+  mutate(from = which((cd4t.df %>% pull(barcode)) == Var1)) %>% 
+  mutate(to = which((cd4t.df  %>% pull(barcode))  == Var2)) %>% 
+  ungroup
+  
+edges.prlf.th1
+
+nodes.prlf.th1 <- cd4t.df %>% 
+  mutate(connected = ifelse(barcode %in% c(edges.prlf.th1$Var1, edges.prlf.th1$Var2), "Connected", "Solo"))
+
+nodes.prlf.th1
+
+ggraph.prlf.th1 <- tbl_graph(nodes = nodes.prlf.th1, edges = edges.prlf.th1, directed = T) %>% arrange(desc(connected))
+ggraph.prlf.th1
+```
+
+```{r, fig.width=5, fig.height=5}
+ggraph(ggraph.prlf.th1, 
+       layout = (ggraph.prlf.th1 %>%  igraph::get.data.frame("vertices") %>% 
+                   select(X_umap1,X_umap2) %>% 
+                   dplyr::rename(x = X_umap1, y = X_umap2))) +
+  geom_node_point(aes(color = connected, size = connected, fill = ifelse(connected == "Connected", as.character(diagSub), "Solo")), shape = 21) +
+  scale_fill_manual(values = c(diagSubColVec, "Solo" = "gray90")) +
+  scale_color_manual(values = c("Connected" = "black", "Solo" = "gray90")) + 
+  scale_size_manual(values = c("Connected" = 1.25, "Solo" = 0.01)) +
+  scale_alpha_manual(values = c("Connected" = 1, "Solo" = 0.01)) +
+  geom_edge_hive(aes(color = Var3), edge_width = 0.3, alpha = 0.3) +
+  coord_cartesian(xlim = c(5.5,13), ylim = c(1,7.5)) +
+  scale_edge_color_manual(values = diagSubColVec) +
+  guides(color = "none", size = "none", fill = "none",
+         edge_color = guide_legend(override.aes = list(edge_width = 5, edge_alpha = 1))) +
+  # geom_line() +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "Th1 and Prlf. Teff Clonal Overlap",
+    edge_color = NULL
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = c(0.1,0.1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold")
+  )
+```
+
+
+```{r}
+list.prlf.th17.th17 <- shared.th17.network$barcode_Th17 %>% str_split("___")
+list.prlf.th17.prlf <- shared.th17.network$`barcode_Prlf. Teff` %>% str_split("___")
+vec.prlf.th17.diagSub <- shared.th17.network$diagSub
+edges.prlf.th17 <- data.frame()
+for (x in 1:nrow(shared.th17.network)){
+  edges.prlf.th17 <- rbind(edges.prlf.th17, expand.grid(
+    list.prlf.th17.th17[[x]], 
+    list.prlf.th17.prlf[[x]], 
+    vec.prlf.th17.diagSub[[x]]))
+}
+
+edges.prlf.th17 <- edges.prlf.th17 %>% 
+  rowwise %>% 
+  mutate(from = which((cd4t.df %>% pull(barcode)) == Var1)) %>% 
+  mutate(to = which((cd4t.df  %>% pull(barcode))  == Var2)) %>% 
+  ungroup
+
+edges.prlf.th17
+
+nodes.prlf.th17 <- cd4t.df %>% 
+  mutate(connected = ifelse(barcode %in% c(edges.prlf.th17$Var1, edges.prlf.th17$Var2), "Connected", "Solo"))
+
+nodes.prlf.th17
+
+ggraph.prlf.th17 <- tbl_graph(nodes = nodes.prlf.th17, edges = edges.prlf.th17, directed = T) %>% arrange(desc(connected))
+ggraph.prlf.th17
+```
+
+```{r, fig.width=5, fig.height=5}
+ggraph(ggraph.prlf.th17, 
+       layout = (ggraph.prlf.th17 %>%  igraph::get.data.frame("vertices") %>% 
+                   select(X_umap1,X_umap2) %>% 
+                   dplyr::rename(x = X_umap1, y = X_umap2))) +
+  geom_node_point(aes(color = connected, size = connected, fill = ifelse(connected == "Connected", as.character(diagSub), "Solo")), shape = 21) +
+  scale_fill_manual(values = c(diagSubColVec, "Solo" = "gray90")) +
+  scale_color_manual(values = c("Connected" = "black", "Solo" = "gray90")) + 
+  scale_size_manual(values = c("Connected" = 1.25, "Solo" = 0.01)) +
+  scale_alpha_manual(values = c("Connected" = 1, "Solo" = 0.01)) +
+  geom_edge_hive(aes(color = Var3), edge_width = 0.3, alpha = 0.3) +
+  coord_cartesian(xlim = c(5.5,13), ylim = c(1,7.5)) +
+  scale_edge_color_manual(values = diagSubColVec) +
+  guides(color = "none", size = "none", fill = "none",
+         edge_color = guide_legend(override.aes = list(edge_width = 5, edge_alpha = 1))) +
+  # geom_line() +
+  labs(
+    x = "UMAP1",
+    y = "UMAP2",
+    title = "Th17 and Prlf. Teff Clonal Overlap",
+    edge_color = NULL
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = c(0.1,0.1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0),
+    text = element_text(size = 16, face = "bold")
+  )
+```
+
+## Morisita Index
+
+```{r}
+ccduc.morisita.cd8.df.plot <- read_csv("out/tcr/clonaloverlap/ccduc_cd8th17_morisita.csv")
+ccduc.morisita.cd8.df.plot
+
+pairedColVec <- c(
+  "Th1—Prlf. Teff" = "#1F78B4",
+  "CD8A- Th17—Prlf. Teff" = "#000004",
+  "CD8A+ Th17—Prlf. Teff" = "#FB8861"
+)
+```
+
+
+```{r, fig.width=6, fig.height=5.5}
+ccduc.morisita.cd8.df.plot %>% 
+  filter(morisita > 0) %>% 
+  ggplot(aes(x = "dummy", y = morisita,
+             label = cellsubtype_paired)) +
+  geom_dotplot(binaxis = "y", stackdir = "center", binwidth = 0.003, stackratio = 0.75, dotsize=3,
+               aes(fill = diagSub, color = cellsubtype_paired), stroke = 4, alpha = 0.75) +
+  geom_label_repel(size = 5, aes(color = cellsubtype_paired), fontface = "bold", 
+                   alpha = 0.75, seed = thisseed, label.padding = 0.1, label.size = 2) +
+  geom_label_repel(size = 5, color = "black", fontface = "bold", 
+                   alpha = 0.75, seed = thisseed, label.padding = 0.1, label.size = 0) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = pairedColVec) +
+  facet_wrap(~diagSub, scales = "fixed") +
+  labs(
+    x = NULL,
+    y = "Morisita-Horn Index",
+    fill = NULL,
+    color = NULL,
+    title = "Clonal Repertoire Similarity"
+  ) +
+  coord_cartesian(ylim = c(0, NA)) +
+  guides(fill = "none") +
+  theme_light() + 
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title = element_text(size = 20, face = "bold"),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.x = element_blank(),
+    strip.text = element_text(color = "black", size = 20, face = "bold"),
+    strip.background = element_rect(color = "black", fill = "white", linewidth = 1),
+    legend.position = "none",
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 12, face = "bold")
+  )
+
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

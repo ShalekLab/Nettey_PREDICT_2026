@@ -1,0 +1,634 @@
+---
+title: "Supplemental Table 2 - Annotation Markers"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+
+In this notebook, I will compile scVI differential expression marker data and gene expression of selected markers into a single Excel file
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(Seurat)
+library(scales)
+library(writexl)
+```
+
+# Read Data
+
+## Annotations
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_annotations_metadata.rds")
+obs
+```
+
+```{r}
+celltype.levels <- obs %>% pull(celltype) %>% levels
+celltype.levels
+
+cellsubtype.levels <- obs %>% pull(cellsubtype) %>% levels
+cellsubtype.levels
+
+cellstate.levels <- obs %>% pull(cellstate) %>% levels
+cellstate.levels
+```
+
+
+## Markers
+
+```{r}
+markers.allcells <- read_csv("out/diffexp/scanpy/AllCells_Type__markers.csv") %>% 
+  select(-`gene...1`) %>% 
+  rename(gene = `gene...3`)
+markers.allcells
+```
+
+```{r}
+markers.paths <- list.files("out/diffexp/scvi", full.names = T)
+markers.paths
+```
+
+
+
+```{r}
+markers.list <- lapply(markers.paths, function(x) read_csv(x, show_col_types = F) %>% 
+                         as.data.frame %>% 
+                         select(-comparison, -group2) %>% 
+                         rename(annotation = group1) %>% 
+                         relocate(annotation, gene, is_de_fdr_0.05) %>% 
+                         mutate(annotation = case_when(
+                           annotation == "PI3+ Epi." ~ "SAA+ Epi.",
+                           annotation == "Prlf. Th17.1" ~ "Prlf. Teff",
+                           !(annotation %in% c("PI3+ Epi.", "Prlf. Th17.1")) ~ annotation
+                         ))
+ 
+)
+
+names(markers.list) <- markers.paths %>% basename %>% str_remove("__markers.csv") %>% str_replace_all("_", " ")
+
+markers.list
+```
+
+```{r}
+markers.df <- plyr::ldply(markers.list, .id = "comparison")
+markers.df
+```
+
+```{r}
+markers.df.list <- markers.df %>% 
+  separate(col = comparison, into = c("celltype", "annotation_level", "relative_group"), sep = " ") %>% 
+  mutate(relative_group = ifelse(is.na(relative_group), celltype, relative_group)) %>% 
+  mutate(annotation_level = case_when(
+    annotation_level == "State" ~ "CellState",
+    annotation_level == "Subtype" ~ "CellSubtype",
+    !(annotation_level %in% c("State", "Subtype")) ~ annotation_level
+  )) %>% 
+  relocate(celltype, relative_group, annotation_level, annotation) %>% 
+  mutate(celltype = fct_relevel(celltype, celltype.levels)) %>% 
+  mutate(relative_group = fct_relevel(relative_group, c(celltype.levels, cellsubtype.levels))) %>% 
+  mutate(annotation_level = fct_relevel(annotation_level, c("CellSubtype", "CellState"))) %>%
+  mutate(annotation = fct_relevel(annotation, cellstate.levels)) %>% 
+  arrange(celltype, annotation_level, relative_group, annotation) %>% 
+  group_by(celltype) %>% 
+  group_split
+
+names(markers.df.list) <- paste("DE", celltype.levels)
+
+markers.df.list
+```
+
+## Shannon Diversity
+
+```{r}
+simpson.out <- obs %>% 
+  group_by(cellstate) %>% 
+  mutate(n = n(), diversity = vegan::diversity(table(biopsy), "simpson")) %>% 
+  ungroup %>% 
+  arrange(cellstate) %>% 
+  distinct(celltype, cellsubtype, cellstate, n, diversity) %>% 
+  rename(
+    CellType = celltype,
+    CellSubtype = cellsubtype,
+    CellState = cellstate,
+    Count = n,
+    Simpson_Index = diversity
+  )
+
+simpson.out
+```
+
+```{r, fig.width=45, fig.height=5}
+accuracy <- simpson.out %>% 
+  mutate(accuracy = ifelse(Count > 1e3, 0.1, 1)) %>%
+  pull(accuracy)
+
+ggplot(simpson.out, aes(x = CellState, y = Count)) + 
+    geom_col(aes(fill = Simpson_Index, color = Simpson_Index)) +
+    geom_text(aes(label = label_number(accuracy = accuracy, scale_cut = cut_short_scale())(Count)), 
+              nudge_y = 1000, fontface="bold", size = 5) + 
+    facet_grid(~CellType+CellSubtype, space = "free", scales = "free") +
+    scale_x_discrete(labels = NULL) +
+    scale_y_continuous(trans = "identity") +
+    scale_fill_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    scale_color_viridis_c(option = "viridis", limits = c(0.5,1), breaks = seq(0.5, 1, 0.1)) +
+    guides(color = "none", fill = guide_colorbar(barheight = 15)) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust=0.5),
+      legend.position = "right",
+      legend.text = element_text(face = "bold", size = 16),
+      legend.title = element_text(face = "bold", size = 18),
+      plot.title = element_text(size = 24, face = "bold"),
+      panel.spacing = unit(0.025, "cm"), 
+      panel.border = element_rect(linewidth = 0.5, color = "black", fill = NA),
+      strip.background = element_rect(linewidth = 0.5, color = "black", fill = "white"),
+      strip.text = element_text(size = 12, face = "bold")  
+    ) +
+    labs(x = NULL, y = NULL, fill = "Simpson\nIndex")
+```
+
+
+## Gene Expression
+
+```{r}
+cellsubtype.assignments <- obs %>% distinct(cellstate, cellsubtype, celltype) %>% arrange(cellstate) %>% pull(cellsubtype, cellstate)
+cellsubtype.assignments
+```
+
+```{r}
+celltype.assignments <- obs %>% distinct(cellstate, cellsubtype, celltype) %>% arrange(cellstate) %>%  pull(celltype, cellstate)
+celltype.assignments
+```
+
+### Colonic Epithelium
+
+```{r}
+seuobj.colepi <- readRDS("data/objects/annotated/predictCOL__CB_colepi_annotated_251017_v4.rds")
+seuobj.colepi
+```
+
+```{r}
+markers.colepi <- c(    
+  'RARRES2', 'LEFTY1',
+  'CA1', 'CEACAM7', 'CCL23', 'BEST4', 
+  'SPINK4', 'ZG16', 'CCL24', 'REG3A', 'REG4',
+  'LGR5', 'PI3', 'SAA1', 'SAA2',
+  'PLCG2', 'LRMP', 'NREP', 
+  'NEUROG3', 'PYY', 'GCG', 'TPH1',
+  'MKI67'
+  )
+```
+
+```{r, fig.width=11, fig.height=12}
+DotPlot(
+  seuobj.colepi, 
+  features =  markers.colepi, 
+  group.by = "cellstate", 
+  scale=F) + 
+  scale_x_discrete(limits = rev) +
+  scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient(low = "gray80", high = "red") +
+  RotatedAxis() +
+  labs(x = "", y = "") +
+  theme(
+    panel.grid = element_line(color = "gray80"),
+    axis.text = element_text(face = "bold", size = 24),
+    legend.title = element_text(face = "bold", size = 18),
+    legend.text = element_text(face = "bold", size = 16),
+  ) +
+  guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+  coord_flip()
+```
+
+```{r}
+marker.colepi.exp.out <- DotPlot(
+  seuobj.colepi, 
+  features =  markers.colepi, 
+  group.by = "cellstate", 
+  scale=T) %>% 
+  .$data %>% 
+  as_tibble %>% 
+  rename(
+    CellState = id,
+    gene = features.plot,
+    AvgExp = avg.exp,
+    ScaledExp = avg.exp.scaled,
+    PctExp = pct.exp
+  ) %>% 
+  mutate(CellSubtype = cellsubtype.assignments[as.character(CellState)]) %>% 
+  mutate(CellType = celltype.assignments[as.character(CellState)]) %>% 
+  relocate(CellType, CellSubtype, CellState, gene, AvgExp, ScaledExp, PctExp) %>% 
+  arrange(CellState, gene)
+
+marker.colepi.exp.out
+```
+
+# Stromal and Endothelial Cells
+
+```{r stroma_read}
+seuobj.stroma <- readRDS("data/objects/annotated/predictCOL__CB_stroma_annotated_251017_v4.rds")
+seuobj.stroma
+```
+
+```{r}
+markers.stroma <- c(    
+  'PECAM1', 
+  'RGS5', 
+  'CD36',
+  'IL33', 'MADCAM1', 
+  'LYVE1',
+  'NOTCH3', 'PDGFRB',
+  'PLN',
+  'LOXL2', 'ANGPT2', 
+  'SPARC',
+  'COL3A1', 'COL4A1',
+  'COL1A1', 'COL6A3',
+  'COL8A1', 'COL9A3',
+  'S100B', 
+  'ABCA8', 'CCL8',
+  'VSTM2A',
+  'CCL19', 'CCL21', 'CXCL13',
+  'MYH11', 'TAGLN', 
+  "THY1", 
+  'TFPI2', 'CCL13', 'CXCL10',
+  'PDPN', 'AGT', 
+  'MMP1', 'MMP3',
+  'MKI67'
+  )
+```
+      
+```{r, fig.width=10.5, fig.height=13}
+DotPlot(
+  seuobj.stroma, 
+  features =  markers.stroma, 
+  group.by = "cellstate", 
+  scale=F) + 
+  # scale_y_discrete(limits = rev) +
+  scale_x_discrete(limits = rev) +
+  scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient2(midpoint = 1, low = "gray40", mid = "gray80", high = "red") +
+  # scale_colour_viridis_c() +
+  RotatedAxis() +
+  labs(x = "", y = "") +
+  theme(
+    panel.grid = element_line(color = "gray80"),
+    axis.text = element_text(face = "bold", size = 24),
+    legend.title = element_text(face = "bold", size = 18),
+    legend.text = element_text(face = "bold", size = 16),
+  ) +
+  guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+  coord_flip()
+```
+
+```{r}
+marker.stroma.exp.out <- DotPlot(
+  seuobj.stroma, 
+  features =  markers.stroma, 
+  group.by = "cellstate", 
+  scale=T) %>% 
+  .$data %>% 
+  as_tibble %>% 
+  rename(
+    CellState = id,
+    gene = features.plot,
+    AvgExp = avg.exp,
+    ScaledExp = avg.exp.scaled,
+    PctExp = pct.exp
+  ) %>% 
+  mutate(CellSubtype = cellsubtype.assignments[as.character(CellState)]) %>% 
+  mutate(CellType = celltype.assignments[as.character(CellState)]) %>% 
+  relocate(CellType, CellSubtype, CellState, gene, AvgExp, ScaledExp, PctExp) %>% 
+  arrange(CellState, gene)
+
+marker.stroma.exp.out
+```
+
+# Myeloid
+
+```{r myeloid_read}
+seuobj.myeloid <- readRDS("data/objects/annotated/predictCOL__CB_myeloid_annotated_251017_v4.rds")
+seuobj.myeloid
+```
+
+```{r}
+markers.myeloid <- c(  
+  'LYZ', 
+  'CD209', 'RNASE1', 'F13A1',
+  'CD1C', 'FCER1A', 'CLEC10A',
+  'C1QA',
+  'IL1B', 'IL18', 'MMP9', 
+  'TNF', 
+  'GBP1', 'CXCL9', 'CXCL10',
+  'CCL3', 'CCL4', 'CXCL1',
+  'CXCL2', 'CXCL3', 
+  'S100A8', 'S100A9', 
+  'CLEC9A', 'XCR1',
+  'LAMP3', 'CCR7', 'CCL19', 
+  'AIRE', 
+  'GZMB', 'LILRA4',
+  'AQP9', 'TPSAB1',
+  'MKI67'
+  )
+```
+
+```{r}
+seuobj.myeloid$cellsubtype %>% levels
+```
+
+```{r}
+seuobj.myeloid$cellsubtype <- fct_relevel(seuobj.myeloid$cellsubtype, c("MonoMac", "Dendritic", "Granulocyte"))
+seuobj.myeloid$cellsubtype %>% levels
+```
+
+```{r}
+seuobj.myeloid$cellstate %>% levels
+```
+
+
+```{r, fig.width=8.5, fig.height=12}
+DotPlot(
+  seuobj.myeloid, 
+  features =  markers.myeloid, 
+  group.by = "cellstate", 
+  scale=F) + 
+  # scale_y_discrete(limits = rev) +
+  scale_x_discrete(limits = rev) +
+  scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient(low = "gray80", high = "red") +
+  # scale_colour_viridis_c() +
+  RotatedAxis() +
+  labs(x = "", y = "") +
+  theme(
+    panel.grid = element_line(color = "gray80"),
+    axis.text = element_text(face = "bold", size = 24),
+    legend.title = element_text(face = "bold", size = 18),
+    legend.text = element_text(face = "bold", size = 16),
+  ) +
+  guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+  coord_flip()
+```
+
+```{r}
+marker.myeloid.exp.out <- DotPlot(
+  seuobj.myeloid, 
+  features =  markers.myeloid, 
+  group.by = "cellstate", 
+  scale=T) %>% 
+  .$data %>% 
+  as_tibble %>% 
+  rename(
+    CellState = id,
+    gene = features.plot,
+    AvgExp = avg.exp,
+    ScaledExp = avg.exp.scaled,
+    PctExp = pct.exp
+  ) %>% 
+  mutate(CellSubtype = cellsubtype.assignments[as.character(CellState)]) %>% 
+  mutate(CellType = celltype.assignments[as.character(CellState)]) %>% 
+  relocate(CellType, CellSubtype, CellState, gene, AvgExp, ScaledExp, PctExp) %>% 
+  arrange(CellState, gene)
+
+marker.myeloid.exp.out
+```
+
+# Plasma
+
+```{r plasma_read}
+seuobj.plasma <- readRDS("data/objects/annotated/predictCOL__CB_plasma_annotated_251017_v4.rds")
+seuobj.plasma
+```
+
+```{r}
+markers.plasma <- c(  
+    'IGHA1','IGHA2',
+    'IGHG1','IGHG2','IGHG3','IGHG4',
+    'IGHM', 'IGHD','IGHE',
+    'MKI67'
+  )
+```
+
+```{r, fig.width=9.5, fig.height=8}
+DotPlot(
+  seuobj.plasma, 
+  features =  markers.plasma, 
+  group.by = "cellstate", 
+  scale=F) + 
+  # scale_y_discrete(limits = rev) +
+  scale_x_discrete(limits = rev) +
+  scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient2(low = "gray40", mid = "gray80", midpoint = 2, high = "red") +
+  # scale_colour_viridis_c() +
+  RotatedAxis() +
+  labs(x = "", y = "") +
+  theme(
+    panel.grid = element_line(color = "gray80"),
+    axis.text = element_text(face = "bold", size = 24),
+    legend.title = element_text(face = "bold", size = 16),
+    legend.text = element_text(face = "bold", size = 16),
+  ) +
+  guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+  coord_flip()
+```
+
+```{r}
+marker.plasma.exp.out <- DotPlot(
+  seuobj.plasma, 
+  features =  markers.plasma, 
+  group.by = "cellstate", 
+  scale=T) %>% 
+  .$data %>% 
+  as_tibble %>% 
+  rename(
+    CellState = id,
+    gene = features.plot,
+    AvgExp = avg.exp,
+    ScaledExp = avg.exp.scaled,
+    PctExp = pct.exp
+  ) %>% 
+  mutate(CellSubtype = cellsubtype.assignments[as.character(CellState)]) %>% 
+  mutate(CellType = celltype.assignments[as.character(CellState)]) %>% 
+  relocate(CellType, CellSubtype, CellState, gene, AvgExp, ScaledExp, PctExp) %>% 
+  arrange(CellState, gene)
+
+marker.plasma.exp.out
+```
+
+# B Cells
+
+```{r bcell_read}
+seuobj.bcell <- readRDS("data/objects/annotated/predictCOL__CB_bcell_annotated_251017_v4.rds")
+seuobj.bcell
+```
+
+```{r}
+markers.bcell <- c(    
+    'IGHD', 'IGHM',
+    'GPR183', 'CD27',
+    'TNFRSF13B', 'FCRL5', 'ENTPD1', 
+    'BCL6', 'AICDA', 'MME', 
+    'MZB1', 
+    'MKI67'
+  )
+```
+
+```{r, fig.width=7, fig.height=7}
+DotPlot(
+  seuobj.bcell, 
+  features =  markers.bcell, 
+  group.by = "cellstate", 
+  scale=F) + 
+  # scale_y_discrete(limits = rev) +
+  scale_x_discrete(limits = rev) +
+  scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient(low = "gray80", high = "red") +
+  # scale_colour_viridis_c() +
+  RotatedAxis() +
+  labs(x = "", y = "") +
+  theme(
+    panel.grid = element_line(color = "gray80"),
+    axis.text = element_text(face = "bold", size = 24),
+    legend.title = element_text(face = "bold", size = 16),
+    legend.text = element_text(face = "bold", size = 16),
+  ) +
+  guides(color = guide_colorbar(title = "LogExp"), size = guide_legend(title = "% Exp")) + 
+  coord_flip()
+```
+
+```{r}
+marker.bcell.exp.out <- DotPlot(
+  seuobj.bcell, 
+  features =  markers.bcell, 
+  group.by = "cellstate", 
+  scale=T) %>% 
+  .$data %>% 
+  as_tibble %>% 
+  rename(
+    CellState = id,
+    gene = features.plot,
+    AvgExp = avg.exp,
+    ScaledExp = avg.exp.scaled,
+    PctExp = pct.exp
+  ) %>% 
+  mutate(CellSubtype = cellsubtype.assignments[as.character(CellState)]) %>% 
+  mutate(CellType = celltype.assignments[as.character(CellState)]) %>% 
+  relocate(CellType, CellSubtype, CellState, gene, AvgExp, ScaledExp, PctExp) %>% 
+  arrange(CellState, gene)
+
+marker.bcell.exp.out
+```
+
+# T Cells, NK Cells, ILCs
+
+```{r tnkilc_read}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+```{r}
+markers.tnkilc <- c(    
+    'CD3D', 'CD4', 'CD8A', 'CD8B', 
+    'KLF2', 'ANXA1',
+    'RORA', 'RORC',
+    'CXCR3', 'CCR6', 'CCR4',
+    'IL12RB2', 'IFNG', 'TNF',
+    'IL17A', 'IL17F', 'IL21', 'IL22', 'IL26',
+    'PASK','IL6R', 'PDCD1', 'CXCL13', 'CXCR5',
+    'LEF1', 'FOXP3', 'PRDM1', 'LAG3',
+    'GZMA', 'GZMK',
+    'ZNF683', 'TRDV1', 'HOPX', 
+    'ITGAE', 'KIR2DL4', 'GZMB',
+    'TRAV1-2', 'TRDV2', 'TRGV9',
+    'ENTPD1',
+    'NKG7', 'PRF1', 'GNLY',
+    'FCGR3A', 'XCL1', 
+    'KIT', 'SOX4',
+    'MKI67'
+)
+```
+
+```{r, fig.width=16.5, fig.height=16}
+DotPlot(
+  seuobj.tnkilc, 
+  features =  markers.tnkilc, 
+  group.by = "cellstate", 
+  scale=F) + 
+  # scale_y_discrete(limits = rev) +
+  scale_x_discrete(limits = rev) +
+  scale_size_continuous(limits = c(0,100), range = c(1, 10)) +
+  scale_color_gradient(low = "gray80", high = "red") +
+  # scale_colour_viridis_c() +
+  RotatedAxis() +
+  labs(x = "", y = "") +
+  theme(
+    panel.grid = element_line(color = "gray80"),
+    axis.text = element_text(face = "bold", size = 24),
+    legend.title = element_text(face = "bold", size = 20),
+    legend.text = element_text(face = "bold", size = 18)
+  ) +
+  guides(color = guide_colorbar(title = "LogExp", order = 1), size = guide_legend(title = "% Exp", order = 2)) + 
+  coord_flip()
+```
+
+```{r}
+marker.tnkilc.exp.out <- DotPlot(
+  seuobj.tnkilc, 
+  features =  markers.tnkilc, 
+  group.by = "cellstate", 
+  scale=T) %>% 
+  .$data %>% 
+  as_tibble %>% 
+  rename(
+    CellState = id,
+    gene = features.plot,
+    AvgExp = avg.exp,
+    ScaledExp = avg.exp.scaled,
+    PctExp = pct.exp
+  ) %>% 
+  mutate(CellSubtype = cellsubtype.assignments[as.character(CellState)]) %>% 
+  mutate(CellType = celltype.assignments[as.character(CellState)]) %>% 
+  relocate(CellType, CellSubtype, CellState, gene, AvgExp, ScaledExp, PctExp) %>% 
+  arrange(CellState, gene)
+
+marker.tnkilc.exp.out
+```
+
+# Combine Lists
+
+```{r}
+markers.out <- list(
+  "Key" = data.frame(), 
+  "DotPlot ColEpi" = marker.colepi.exp.out,
+  "DotPlot Stroma" = marker.stroma.exp.out,
+  "DotPlot Myeloid" = marker.myeloid.exp.out,
+  "DotPlot Plasma" = marker.plasma.exp.out,
+  "DotPlot BCell" = marker.bcell.exp.out,
+  "DotPlot TNKILC" = marker.tnkilc.exp.out,
+  "DE Celltypes" = markers.allcells) %>%
+  append(markers.df.list)
+  
+
+markers.out
+```
+
+
+
+```{r}
+write_xlsx(markers.out, 
+           path = "out/tables/Supplemental Table 2 - Gene Markers.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

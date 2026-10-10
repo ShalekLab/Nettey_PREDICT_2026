@@ -1,0 +1,433 @@
+---
+title: "Main Figure 6"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Main Figure 6
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggrepel)
+library(ggpmisc)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+# Cell Frequency
+
+```{r, fig.width=3.25, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Tfh"),
+  relative.to = "tgroup",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellsubtype) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(label = "p.format", vjust = 1.4, size = 5) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.2)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of CD4 T Cells", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=5.5, fig.height=4}
+PlotBoxplotsProp(
+  obs %>% filter(timepoint == "T0") %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Lo Tfh", "PD1Hi Tfh"),
+  relative.to = "cellsubtype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  ggplot(aes(x = diagSub, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(aes(fill = diagSub), size = 4,
+             shape = 21, alpha = 0.75, position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  facet_grid(~cellstate) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.4, size = 5,
+                     label.y = c(0.95, 1.05, 1.15, 1.25)) + 
+  scale_y_continuous(labels = percent, breaks = seq(0,1,0.2)) +
+  coord_cartesian(ylim = c(0,1.3)) +
+  guides(fill = "none") +
+  labs(
+    x = NULL, 
+    y = "Percentage of Tfh Cells", 
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Gene Expression
+
+```{r, fig.width=6.5, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>% 
+    droplevels,
+  seurat = "seuobj",
+  features = c("MAF", "PDCD1", "IL21", "CXCL13"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = diagSub, y = meanVal, color = diagSub, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 4, color = "black", position = position_jitterdodge(jitter.width = 0.5)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=0.4, position = position_jitterdodge(jitter.width = 0)) +
+  facet_grid(~featureVar, scales = "free_y") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 2, size = 5, tip.length = 0.05, bracket = 1) +
+  coord_cartesian(ylim = c(0, 1.55)) +
+  guides(fill = "none") +
+  labs(
+    y = "Mean Gene Expression\n(PD1Hi Tfh Cells)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=6.5, fig.height=4}
+PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(timepoint == "T0" & diagSub %in% c("cCD", "UC")) %>% 
+    droplevels,
+  seurat = "seuobj",
+  features = c("MAF", "PDCD1", "IL21", "CXCL13"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th17"),
+  minDenomFreq = 10,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = diagSub, y = meanVal, color = diagSub, fill = diagSub)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 4, color = "black", position = position_jitterdodge(jitter.width = 0.5)) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), color = "black", width=0.3, linewidth=0.4, position = position_jitterdodge(jitter.width = 0)) +
+  facet_grid(~featureVar, scales = "free_y") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = list(c("cCD", "UC")), label = "p.format", vjust = 2, size = 5, tip.length = 0.05, bracket = 1) +
+  coord_cartesian(ylim = c(0, 1.5)) +
+  guides(fill = "none") +
+  labs(
+    y = "Mean Gene Expression\n(Th17 Cells)",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Regressions
+
+```{r, fig.width=5, fig.height=4.5}
+SenderReceiver(
+    seuobj@meta.data %>% filter(diagSub %in% c("cCD", "UC") & timepoint == "T0")  %>%  droplevels,
+    seurat = "seuobj",
+    senderCol = "cellstate",
+    senderVal = c("PD1Hi Tfh"),
+    senderProp = TRUE,
+    senderRelative = "cellsubtype",
+    senderMinDenomFreq = 10,
+    receiverCol = "cellstate",
+    receiverVal = c("Th17"),
+    receiverProp = TRUE,
+    receiverRelative = "cellsubtype",
+    receiverMinDenomFreq = 10,
+    facetType = "grid",
+    facet_scales = "free_x",
+    facet_dir = "v",
+    ncol = 4,
+    stripSize = 14,
+    axisXsize = 16,
+    axisYsize = 16,
+    regSize = 5,
+    groupReg = T,
+    fillReg = T,
+    exportSampleDF = T
+) %>% 
+    ggplot(aes(x = prop.sender, y = prop.receiver, color = diagSub, group = diagSub)) +
+    geom_point(aes(fill = diagSub), shape = 21, stroke = 1.5, size = 5, alpha = 1, color = "black") +
+    scale_size_continuous(range = c(2, 7)) +
+    scale_color_manual(values = diagSubColVec) +
+    scale_fill_manual(values = diagSubColVec) +
+    scale_x_continuous(labels = percent, breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+    scale_y_continuous(labels = percent, breaks = c(0, 0.25, 0.5, 0.75, 1)) +
+    coord_cartesian(ylim = c(0, 1.2), xlim = c(0, 1)) +
+    stat_poly_line(method = "lm") +
+    stat_poly_eq(method = "lm", use_label(c("R2", "P")), size = 7, vstep = 0.1, vjust=0.575) +
+    labs(
+        x = "PD1Hi Tfh Frequency\n(Relative to Tfh)", 
+        y = "Th17 Frequency\n(Relative to Thelper)", 
+        size = "# Cells", 
+        fill = NULL,
+        color = NULL,
+        subtitle = NULL) +
+    theme_light() +
+    theme(
+        plot.title = element_text(size = 18, face = "bold"),
+        plot.subtitle = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(size = 18, face = "bold", angle = 0, hjust=0.5),
+        axis.text.y = element_text(size = 18, face = "bold"),
+        axis.title.x = element_text(size = 20, face = "bold"),
+        axis.title.y = element_text(size = 20, face = "bold"),
+        legend.position = "top",
+        legend.text = element_text(size = 16, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold"),
+        strip.text = element_text(size = 18, face = "bold", color = "black"),
+        strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+        plot.margin = unit(c(0.25, 0.5, 0.25, 0.25), "cm"),
+        panel.spacing.x = unit(0.5, "cm")
+    )
+```
+
+
+```{r, fig.width=7.5, fig.height=4}
+SenderReceiver(
+    seuobj@meta.data %>% filter(diagSub %in% c("cCD", "UC") & timepoint == "T0") %>%  droplevels,
+    seurat = "seuobj",
+    senderCol = "cellstate",
+    senderVal = c("PD1Hi Tfh", "Th17"),
+    senderProp = TRUE,
+    senderRelative = "tgroup",
+    senderMinDenomFreq = 10,
+    receiverCol = "cellstate",
+    receiverVal = c("IgG1 PC"),
+    receiverProp = TRUE,
+    receiverRelative = "celltype",
+    receiverMinDenomFreq = 10,
+    facetType = "grid",
+    facet_scales = "free_x",
+    facet_dir = "v",
+    xVar = "diagSub",
+    fillVar = "antitnf_response",
+    ncol = 4,
+    stripSize = 14,
+    axisXsize = 16,
+    axisYsize = 16,
+    regSize = 5,
+    groupReg = T,
+    fillReg = T,
+    exportSampleDF = T
+) %>% 
+    ggplot(aes(x = prop.sender, y = prop.receiver, group = fct_relevel(diagSub, c("cCD", "UC")), color = diagSub)) +
+    geom_point(aes(fill = diagSub), color = "black", size = 3.5, shape = 21, stroke = 1.5, alpha = 0.9) +
+    scale_fill_manual(values = diagSubColVec) +
+    scale_color_manual(values = diagSubColVec) +
+    scale_x_continuous(labels = percent) +
+    scale_y_continuous(labels = percent) +
+    stat_poly_line(method = "lm") +
+    stat_poly_eq(method = "lm", use_label(c("R2", "P")), rsquared.conf.level = 0.999, size = 6, vstep = 0.1, hjust=-0.05) +
+    facet_grid(~senderExp, scales = "free") +
+    guides(
+    ) +
+    labs(
+        x = "T Cell Frequency (Relative to CD4 T Cells)", 
+        y = "IgG1 PC Frequency\n(Relative to Plasma Cells)", 
+        size = "# Cells", 
+        shape = NULL,
+        fill = NULL,
+        color = NULL,
+        subtitle = NULL) +
+    theme_light() +
+    theme(
+        plot.title = element_text(size = 18, face = "bold"),
+        plot.subtitle = element_text(size = 14, face = "bold"),
+        axis.text.x = element_text(size = 14, face = "bold", angle = 0, hjust=0.5),
+        axis.text.y = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 18, face = "bold"),
+        axis.title.y = element_text(size = 18, face = "bold"),
+        legend.position = "top",
+        legend.text = element_text(size = 14, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold"),
+        strip.text = element_text(size = 16, face = "bold", color = "black"),
+        strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+        plot.margin = unit(c(0.25, 0.5, 0.25, 0.25), "cm"),
+        panel.spacing.x = unit(1, "cm")
+    )
+```
+
+
+```{r, fig.width=7, fig.height=4}
+SenderReceiver(
+  seuobj@meta.data %>% filter(diagSub %in% c("cCD", "UC") & timepoint == "T0") %>%  droplevels,
+  seurat = "seuobj",
+  senderCol = "cellstate",
+  senderVal = c("PD1Hi Tfh", "Th17"),
+  features.sender = c("CXCL13", "IL17A"),
+  senderProp = FALSE,
+  senderRelative = "cellstate",
+  minSenderFreq = 10,
+  receiverCol = "cellstate",
+  receiverVal = c("IgG1 PC"),
+  receiverProp = TRUE,
+  receiverRelative = "celltype",
+  receiverMinDenomFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  facet_dir = "v",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  ncol = 4,
+  stripSize = 14,
+  axisXsize = 16,
+  axisYsize = 16,
+  regSize = 5,
+  groupReg = T,
+  fillReg = T,
+  exportSampleDF = T
+) %>% 
+  filter(senderName %in% c("PD1Hi Tfh_CXCL13", "Th17_IL17A")) %>% 
+  mutate(senderName = case_when(
+    senderName == "PD1Hi Tfh_CXCL13" ~ "PD1Hi Tfh - CXCL13",
+    senderName == "Th17_IL17A" ~ "Th17 - IL17A"
+  )) %>%
+  ggplot(aes(x = senderExp, y = prop.receiver, group = diagSub, color = diagSub)) +
+  geom_point(aes(fill = diagSub), color = "black", size = 3.5, shape = 21, stroke = 1.5, alpha = 0.9) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  scale_y_continuous(labels = percent) +
+  stat_poly_line(method = "lm") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")), rsquared.conf.level = 0.999, size = 6, vstep = 0.1, hjust=-0.05) +
+  facet_grid(~senderName, scales = "free") +
+  guides(
+    ) +
+  labs(
+    x = "Mean Gene Expression", 
+    y = "IgG1 PC Frequency\n(Relative to Plasma Cells)", 
+    size = "# Cells", 
+    shape = NULL,
+    fill = NULL,
+    color = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 14, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.x = element_text(size = 18, face = "bold"),
+    axis.title.y = element_text(size = 18, face = "bold"),
+    legend.position = "top",
+    legend.text = element_text(size = 15, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    plot.margin = unit(c(0.25, 0.5, 0.25, 0.25), "cm"),
+    panel.spacing.x = unit(1, "cm")
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,881 @@
+---
+title: "Supplemental Figure 10"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 10
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(ggrepel)
+library(ggpmisc)
+library(stringi)
+library(pheatmap)
+library(grid)
+library(ComplexHeatmap)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+colAPECED <- "#d2b48c"
+diagSubAPECEDColVec <- c("APECED" = colAPECED, diagSubColVec)
+
+colNM <- "#6b6a6a"
+colNOA <- "#bfbfbf"
+colFR <- "#11d6cc"
+colPR <- "#ff8c00"
+colNR <- "#ff1e00"
+atnfColVec <- c("NM"=colNM, "NOA"=colNOA,"FR"=colFR,"PR"=colPR,"NR"=colNR)
+
+source("../functions/ComparisonPlottingFxns.R")
+
+uc.drb1.risk <- c("01:03", "12:01", "15:01", "11:04", "11:01", "13:01")
+uc.drb1.prot <- c("03:01", "13:02", "07:01", "04:04", "09:01")
+
+selectedparticipants <- c("001-036", "001-038")
+partColVec <- rep("darkred", length(selectedparticipants))
+names(partColVec) <- selectedparticipants
+ 
+`%notin%` <- Negate(`%in%`)
+```
+
+# HLA
+
+## Data Prep
+
+```{r}
+metadata <- readRDS("data/metadata/241120__predictCOL_metadata_COL_GEX.rds")
+metadata
+```
+
+```{r}
+hla.drb1 <- read_csv("out/hla/allele_assigned/PREDICT_REGNIMP__HLA_DRB1.csv", show_col_types = F)
+
+hla.drb1
+```
+
+```{r}
+hla.drb1.uc <- hla.drb1 %>% 
+  left_join(., metadata %>% distinct(participant_id, diagSub, antitnf_response)) %>% 
+  filter(diagSub == "UC") %>% 
+  relocate(participant_id, diagSub, antitnf_response, Allele1, Allele2)
+
+hla.drb1.uc
+```
+
+
+```{r}
+hla.drb1.wide <- rbind(
+  hla.drb1.uc %>% select(-Allele2) %>%  rename(Allele = Allele1),
+  hla.drb1.uc %>% select(-Allele1) %>% rename(Allele = Allele2)
+) %>% 
+  arrange(participant_id) %>%
+  count(participant_id, Allele) %>% 
+  pivot_wider(names_from = Allele,
+              values_from = n, 
+              values_fill = list(n = 0)) %>% 
+  rename_with(.fn = ~str_remove(., "HLA-DRB1\\*"))
+
+hla.drb1.wide$`09:01` <- 0 # UC protective allele that was not identified in PREDICT
+
+hla.drb1.wide <- hla.drb1.wide %>% 
+  column_to_rownames("participant_id")
+
+hla.drb1.wide
+```
+
+```{r}
+# combine present alleles and UC GWAS alleles
+hla.uc.all <- union(
+  colnames(hla.drb1.wide),
+  c(uc.drb1.prot, uc.drb1.risk)
+) %>% sort
+
+
+hla.uc.all
+```
+
+
+```{r}
+anno.hla <- data.frame(HLA = hla.uc.all) %>% 
+  mutate(`UC GWAS` = case_when(
+    HLA %in% uc.drb1.risk ~ "Risk",
+    HLA %in% uc.drb1.prot ~ "Prot",
+    !is.na(HLA) ~ "NS",
+  )) %>% 
+  column_to_rownames("HLA") %>% 
+  mutate(`UC GWAS` = fct_relevel(`UC GWAS`, c("Prot", "NS", "Risk")))
+
+anno.hla
+```
+
+```{r}
+anno.cols <- list(
+  `UC GWAS` = c("Prot" = RColorBrewer::brewer.pal(3, "Pastel1")[3], 
+                "NS" = RColorBrewer::brewer.pal(3, "Pastel1")[2], 
+                "Risk" = RColorBrewer::brewer.pal(3, "Pastel1")[1])
+  )
+anno.cols
+```
+
+```{r}
+# add UC GWAS alleles not present in UC data
+hla.uc.absent <- setdiff(hla.uc.all, colnames(hla.drb1.wide))
+
+hla.drb1.wide.plot <- hla.drb1.wide %>% 
+    mutate(
+      !!!set_names(map(hla.uc.absent, ~ 0), hla.uc.absent)
+    ) %>% 
+  relocate(
+    !!(intersect(anno.hla %>% arrange(`UC GWAS`) %>% rownames, hla.uc.all)
+    )
+  )
+
+hla.drb1.wide.plot
+```
+
+```{r, fig.height=5, fig.width=9}
+setHook("grid.newpage", function() pushViewport(viewport(x=1,y=1,width=0.975, height=0.925, name="vp", just=c("right","top"))), action="prepend")
+
+pheatmap::pheatmap(hla.drb1.wide.plot %>% t, 
+         annotation_row = anno.hla, 
+         # annotation_row = anno.pts.uc,
+         annotation_colors = anno.cols,
+         cluster_cols = F, cluster_rows = F,
+         gaps_row = c(5, 12),
+         # gaps_col = c(22, 49),
+         annotation_names_col = F, annotation_names_row = F,
+         color = colorRampPalette(c("#ffffff", "#eeee00", "#ee2c2c"))(3),
+         legend_breaks = c(0,1,2),angle_col = 0, 
+         legend = F,
+         row.names=T,
+         fontsize = 12,
+)
+
+setHook("grid.newpage", NULL, "replace")
+grid.text("UC Participant ID", x=0.4, y=-0.04, gp=gpar(fontsize=16))
+grid.text("HLA-DRB1 Allele", x=0.89, rot=270, gp=gpar(fontsize=16))
+```
+
+```{r}
+data.frame("GWAS" = factor(c("Prot", "NS", "Risk"), levels = c("Prot", "NS", "Risk")), 
+           "value" = 0:2) %>% 
+  ggplot(aes(y = value)) +
+  geom_bar(aes(fill = GWAS), color = "gray60") +
+  scale_fill_manual(values = anno.cols$`UC GWAS`,
+                    labels = c("Protective\nAllele", "Not\nSignificant", "Risk\nAllele")) + 
+  labs(fill = "UC GWAS Category") + 
+  theme(
+    legend.key.spacing.y = unit(0.25, "cm"),
+    legend.key.height = unit(1, "cm"),
+    legend.key.width = unit(3, "cm"),
+    legend.title = element_text(size = 20, face = "bold"),
+    legend.text = element_text(size = 18, face = "bold")
+  )
+```
+
+```{r}
+data.frame("AlleleNum" = factor(c("Zero", "One", "Two"), levels = c("Two", "One", "Zero")), 
+           "value" = 2:0) %>% 
+  ggplot(aes(y = value)) +
+  geom_bar(aes(fill = AlleleNum), color = "gray60") +
+  scale_fill_manual(values = c("firebrick2", "yellow2", "white"), 
+                    labels = c("2", "1", "0")) + 
+  labs(fill = "Number of\nHLA-DRB1 Alleles") + 
+  theme(
+    legend.key.spacing.y = unit(0.25, "cm"),
+    legend.key.height = unit(1, "cm"),
+    legend.key.width = unit(2.5, "cm"),
+    legend.title = element_text(size = 16, face = "bold"),
+    legend.text = element_text(size = 16, face = "bold")
+  )
+```
+
+# HuProt
+
+## Data Prep
+
+```{r}
+huprot.long <- readRDS("out/huprot/huprot__igg_zscorehits_long.rds")
+
+huprot.long
+```
+
+```{r}
+huprot.igg.hits <- huprot.long %>% 
+  group_by(participant_id) %>% 
+  mutate(hits = sum(zscore > 3)) %>% 
+  ungroup %>% 
+  distinct(participant_id, .keep_all = T) %>% 
+  select(-Antigen:-ID, -zscore)
+
+huprot.igg.hits
+```
+
+```{r}
+dat.median <- huprot.igg.hits %>% 
+  group_by(diagSub) %>%
+  dplyr::summarize(medhits = median(hits), 
+                   q75 = quantile(hits, .75), 
+                   q25 = quantile(hits, .25)
+  )
+dat.median
+```
+
+
+```{r}
+huprot.igg.hits %>% 
+  mutate(pointshape = case_when(
+    participant_id %in% selectedparticipants ~ "b",
+    participant_id %notin% selectedparticipants ~ "a",
+  )) %>% 
+ggplot(aes(x = diagSub, y = hits)) + 
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(stroke = 1.25, size = 4, aes(fill = antitnf_response, shape = pointshape),
+             position = position_jitter(width = 0.25, height = 0, seed = thisseed)) +
+    geom_text(
+    data = dat.median,
+    aes(x = diagSub, y = 590, label = paste0(medhits, "\n", "(", q25, "-", q75, ")")),
+    fontface = "bold",
+    ) +
+  scale_fill_manual(values = atnfColVec) +
+  scale_shape_manual(values = c("a" = 21, "b" = 22)) +
+  scale_y_continuous(breaks = pretty_breaks(6)) +
+  labs(
+    x = NULL, 
+    y = "Number of Autoantibody\nHits per Subject", 
+    fill = NULL,
+    subtitle = NULL) +
+  guides(shape = "none") +
+  guides(fill = guide_legend(override.aes = (list(shape = 21)))) +
+  coord_cartesian(ylim = c(0,600)) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## 001-036 and 001-038 Hits
+
+### Z Score Values
+
+```{r}
+igg.zscore.long <- readRDS("out/huprot/huprot__igg_zscorevalues_long.rds")
+igg.zscore.long
+```
+
+```{r}
+igg.zscore.long %>% 
+  filter(Antigen %in% c("ENO1", "MED18", "YWHAQ")) %>% 
+  group_by(diagSub, Name, .drop = FALSE) %>% 
+  mutate(mean = mean(zscore, na.rm = T)) %>% 
+  mutate(se = sd(zscore, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  mutate(labelname = ifelse(zscore > 3, participant_id, NA)) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  ggplot(., aes(x = diagSub, y = zscore, fill = diagSub)) + 
+  geom_boxplot(fill = "white", outlier.shape = NA) +
+  geom_hline(yintercept = 3, lty = 2, lwd = 1, alpha = 0.5) +
+  geom_label(aes(label = labelname, color = diagSub), fill = "white", alpha = 0.8, size = 3.5, label.size = 2, nudge_x = -0.4, nudge_y = -0.25, show.legend = F) +
+  geom_label(aes(label = labelname), fill = "white", alpha = 0.8, size = 3.5, label.size = 0, nudge_x = -0.4, nudge_y = -0.25, show.legend = F) +
+  geom_point(aes(shape = alleleNum), position = position_jitterdodge(jitter.width = 1.25, seed = thisseed), size = 3.5, color = "black") +
+  facet_wrap(~Antigen, scales = "fixed", ncol = 10) +
+  scale_fill_manual(values = diagSubAPECEDColVec) +
+  scale_color_manual(values = diagSubAPECEDColVec) +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  guides(shape = "none", fill = guide_legend(override.aes = list(shape = 21))) +
+  labs(
+    y = "Z Score",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+
+### Binary
+
+```{r}
+igg.zscore.wide <- read_csv("out/huprot/huprot__igg_zscorehits_wide.csv")
+igg.zscore.wide
+```
+
+
+```{r}
+igg.1501.order <- igg.zscore.wide %>% 
+  filter(`001-036_T0` > 0 & `001-038_T0` > 0) %>% 
+  pivot_longer(c(-Antigen:-ID), names_to = "visit", values_to = "zscore") %>% 
+  filter(zscore > 0) %>%
+  group_by(Antigen) %>% 
+  mutate(distinct_biopsies = n_distinct(visit), .after = ID) %>% 
+  ungroup %>% 
+  arrange(distinct_biopsies, Antigen)
+
+igg.1501.order
+```
+
+```{r}
+igg.1501.out <- igg.zscore.wide %>% 
+  filter(`001-036_T0` > 0 & `001-038_T0` > 0) %>% 
+  left_join(igg.1501.order %>% 
+              distinct(ID, distinct_biopsies),
+            by = "ID") %>% 
+  relocate(distinct_biopsies, .after = ID) %>% 
+  arrange(distinct_biopsies, ID)
+
+igg.1501.out
+```
+
+
+```{r}
+igg.zscore.1501 <- igg.1501.out %>% 
+  rename_with(.fn = ~str_remove(., "_T0")) %>% 
+  pivot_longer(cols = -c(Antigen:distinct_biopsies), names_to = "participant_id", values_to = "zscore") %>% 
+  group_by(Antigen, participant_id) %>% 
+  mutate(zscore.mean = mean(zscore), .after = zscore) %>%
+  ungroup %>% 
+  distinct(Antigen, participant_id, .keep_all = T) %>% 
+  select(Antigen, participant_id, zscore.mean) %>%
+  arrange(Antigen) %>% 
+  pivot_wider(id_cols = Antigen, names_from = participant_id, values_from = zscore.mean) %>% 
+  column_to_rownames("Antigen") %>% 
+  .[igg.1501.order %>% distinct(Antigen) %>% pull(Antigen),]
+
+igg.zscore.1501
+```
+
+```{r}
+metadata.huprot <- readRDS("out/huprot/huprot_metadata.rds")
+metadata.huprot
+```
+
+
+```{r}
+anno.pts <- metadata.huprot %>% 
+  filter(PREDICTCOL | diagSub == "TFA") %>% 
+  filter(timepoint == "T0") %>% 
+  droplevels %>% 
+  mutate(diagSub = ifelse(diagSub == "TFA", "APECED", as.character(diagSub))) %>% 
+  mutate(diagSub = fct_relevel(diagSub, c("APECED", "FGID", "iCD", "cCD", "UC"))) %>% 
+  distinct(participant_id, diagSub) %>% 
+  dplyr::rename(Diagnosis = diagSub) %>% 
+  column_to_rownames("participant_id")
+
+anno.pts
+```
+
+```{r}
+anno.cols <- list(Diagnosis = diagSubAPECEDColVec)
+anno.cols
+```
+
+
+```{r}
+binarizePos <- function(mat, threshold = 0){
+  mat[mat > threshold] = 1
+  mat[mat <= threshold] = 0
+  return(mat)
+}
+```
+
+```{r}
+ha.nolegend <- HeatmapAnnotation(
+  Diagnosis = anno.pts$Diagnosis,
+  col = anno.cols,
+  show_annotation_name = FALSE,
+  show_legend = FALSE,
+  border = T,
+  gp = gpar(col = "gray25")
+)
+```
+
+
+```{r, fig.height=18, fig.width=11}
+ht <- Heatmap(as.matrix(binarizePos(igg.zscore.1501)), 
+        name = "Z Score",
+        col = colorRampPalette(c("gray100", "purple"))(2),
+        column_split = anno.pts$Diagnosis,
+        column_gap = unit(0.35, "cm"),
+        cluster_rows = F,
+        cluster_columns = F,
+        row_title = "HuProt Antigens with Hits in 001-036 and 001-038", 
+        column_names_gp = gpar(fontsize = 11),
+        top_annotation = ha.nolegend,
+        row_names_side = "left",
+        rect_gp = gpar(col = "gray25"),
+        row_title_gp = gpar(fontsize = 24, fontface = "bold"),
+        column_title_gp = gpar(fontsize = 16, fontface = "bold"), 
+        show_heatmap_legend = F,
+        border_gp = gpar(col = "black", lwd = 3)
+)
+
+draw(ht, padding = unit(c(7.5, 2.5, 2.5, 2.5), "mm"))
+
+grid.text("Participant ID",
+          x = 0.55, y = unit(0.6, "cm"), # shift downward under heatmap
+          gp = gpar(fontsize = 24, fontface = "bold"))
+```
+
+```{r}
+data.frame("Hit" =  factor(c("No Hit", "Z-Score Hit"), levels = c("No Hit", "Z-Score Hit")),
+           "value" = 0:1) %>% 
+  ggplot(aes(y = value)) +
+  geom_bar(aes(fill = Hit), color = "gray60") +
+  scale_fill_manual(values = c("No Hit" = "#ffffff", "Z-Score Hit" = "#a020f0")) + 
+  labs(fill = NULL) + 
+  theme(
+    legend.key.spacing.y = unit(0.25, "cm"),
+    legend.key.height = unit(0.5, "cm"),
+    legend.key.width = unit(0.5, "cm"),
+    legend.title = element_text(size = 20, face = "bold"),
+    legend.text = element_text(size = 18, face = "bold")
+  ) + 
+  guides(fill = guide_legend(ncol = 1, reverse = T))
+```
+
+# 15:01 vs. Other UC
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds") %>% 
+  rownames_to_column("barcode")
+
+obs
+```
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+
+obs <- left_join(obs, tcrs %>% select(-data_folder), by = "barcode")
+obs
+```
+
+
+```{r}
+tirp <- read_csv("out/tcr/tirp/241120_predictCOL_tirp.csv")
+tirp
+
+obs <- left_join(obs, tirp %>% distinct(cdr3, .keep_all = T), by = c("cdr3.TRB" = "cdr3"))
+obs
+```
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+```{r}
+seuobj <- AddMetaData(seuobj, obs %>% column_to_rownames("barcode") %>% select(cdr3.TRB, mTiRP))
+seuobj@meta.data
+```
+
+```{r}
+seuobj.uc <- subset(seuobj, subset = timepoint == "T0" & diagSub == "UC")
+seuobj.uc
+```
+
+## Frequency
+
+```{r, fig.width=4, fig.height=3.5}
+PlotBoxplotsProp(
+  seuobj.uc@meta.data,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th17", "PD1Hi Tfh"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  arrange(!is.na(partCol), partCol) %>%
+  ggplot(aes(x = DRB1, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(fill = colUC, size = 4,
+             aes(shape = alleleNum), alpha = 0.75) +
+  facet_grid(~cellstate, scales = "free_y") +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  stat_compare_means(comparisons = list(c("15:01", "Other")), 
+                     label = "p.format", vjust = 1.15, size = 5.5) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    x = "HLA-DRB1 Allele", 
+    y = "Percentage of T/NK/ILC", 
+    fill = "Number of HLA-DRB1*15:01 Alleles",
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=4, fig.height=3.5}
+PlotBoxplotsProp(
+  seuobj.uc@meta.data,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("IgA2 PC", "IgG1 PC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  arrange(!is.na(partCol), partCol) %>% 
+  ggplot(aes(x = DRB1, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(fill = colUC, size = 4,
+             aes(shape = alleleNum), alpha = 0.75) +
+  facet_grid(~cellstate, scales = "free_y") +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  stat_compare_means(comparisons = list(c("15:01", "Other")), 
+                     label = "p.format", vjust = 1.4, size = 5.5) +
+  scale_y_continuous(labels = percent) +
+  labs(
+    x = "HLA-DRB1 Allele", 
+    y = "Percentage of Plasma Cells", 
+    fill = "Number of HLA-DRB1*15:01 Alleles",
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=2.6, fig.height=3.5}
+PlotBoxplotsProp(
+  seuobj.uc@meta.data,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("SAA+ Epi."),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>%
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  arrange(!is.na(partCol), partCol) %>% 
+  ggplot(aes(x = DRB1, y = prop)) +
+  geom_boxplot(outlier.shape = NA, fill = NA) +
+  geom_point(fill = colUC, size = 4,
+             aes(shape = alleleNum), alpha = 0.75) +
+  facet_grid(~cellstate, scales = "free_y") +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  stat_compare_means(comparisons = list(c("15:01", "Other")), 
+                     label = "p.format", vjust = 1.2, size = 5.5) +
+  scale_y_continuous(labels = percent) +
+  coord_cartesian(ylim = c(0, NA)) +
+  labs(
+    x = "HLA-DRB1 Allele", 
+    y = "Percentage of ColEpi Cells", 
+    fill = "Number of HLA-DRB1*15:01 Alleles",
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## Gene Expression
+
+```{r, fig.width=4, fig.height=3.55}
+PlotBoxplotsFeatures(
+  seuobj.uc@meta.data,
+  seurat = "seuobj.uc",
+  features = c("IL17A"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th17", "PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  arrange(!is.na(partCol), partCol) %>% 
+  group_by(diagSub, DRB1, cellstate, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = DRB1, y = meanVal)) +
+  geom_bar(stat = "summary", fun = "mean", 
+           color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  geom_point(aes(shape = alleleNum), stroke = 1, size = 5, fill = colUC) +
+  facet_wrap(~cellstate, scales = "fixed", ncol = 4) +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  stat_compare_means(comparisons = list(c("15:01", "Other")), 
+                     label = "p.format", vjust=1.25, size = 5.5) +
+  labs(
+    x = "HLA-DRB1 Allele",
+    y = "Mean IL17A Gene Expression",
+    size = "# Cells",
+    fill = "Number of HLA-DRB1*15:01 Alleles",
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r, fig.width=4, fig.height=3.55}
+PlotBoxplotsFeatures(
+  seuobj.uc@meta.data,
+  seurat = "seuobj.uc",
+  features = c("CXCL13"),
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th17", "PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  arrange(!is.na(partCol), partCol) %>% 
+  group_by(diagSub, DRB1, cellstate, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = DRB1, y = meanVal)) +
+  geom_bar(stat = "summary", fun = "mean", 
+           color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  geom_point(aes(shape = alleleNum), stroke = 1, size = 5, fill = colUC) +
+  facet_wrap(~cellstate, scales = "fixed", ncol = 4) +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  stat_compare_means(comparisons = list(c("15:01", "Other")), 
+                     label = "p.format", vjust=1.25, size = 5.5) +
+  labs(
+    x = "HLA-DRB1 Allele",
+    y = "Mean CXCL13 Gene Expression",
+    size = "# Cells",
+    fill = "Number of HLA-DRB1*15:01 Alleles",
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+## mTiRP
+
+```{r, fig.width=2.6, fig.height=3.5}
+PlotBoxplotsFeatures(
+  seuobj.uc@meta.data %>% filter(!is.na(cdr3.TRB)) %>% droplevels,
+  features = "mTiRP",
+  relative.to = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("PD1Hi Tfh"),
+  ncol = 2,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  yLab = "Mean AA Composition Score",
+  exportSampleDF = T
+)  %>% 
+  mutate(participant_id = str_split(biopsy, "_", simplify = T)[,1]) %>% 
+  mutate(partCol = ifelse(participant_id %in% selectedparticipants, participant_id, NA)) %>% 
+  mutate(partCol = fct_relevel(partCol, selectedparticipants)) %>% 
+  mutate(DRB1 = ifelse(participant_id %in% selectedparticipants, "15:01", "Other")) %>% 
+  mutate(DRB1 = fct_relevel(DRB1, c("15:01", "Other"))) %>% 
+  mutate(alleleNum = case_when(
+    participant_id == "001-036" ~ "2",
+    participant_id == "001-038" ~ "1",
+    participant_id %notin% c("001-036", "001-038") ~ "0",
+  )) %>% 
+  arrange(!is.na(partCol), partCol) %>% 
+  group_by(diagSub, DRB1, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = DRB1, y = meanVal)) +
+  geom_bar(stat = "summary", fun = "mean", 
+           color = "black", fill = "gray90") +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  geom_point(aes(shape = alleleNum), stroke = 1, size = 5, fill = colUC) +
+  facet_wrap(~cellstate, scales = "fixed", ncol = 4) +
+  scale_shape_manual(values = c("0" = 21, "1" = 22, "2" = 22)) +
+  stat_compare_means(comparisons = list(c("15:01", "Other")), 
+                     label = "p.format", vjust=1.25, size = 5.5) +
+  labs(
+    x = "HLA-DRB1 Allele",
+    y = "Mean mTiRP Score",
+    size = "# Cells",
+    fill = "Number of\nHLA-DRB1*15:01 Alleles",
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.justification = "right",
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  ) + guides(fill = guide_legend(title.position = "top"))
+
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```

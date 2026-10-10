@@ -1,0 +1,81 @@
+---
+title: "Supplemental Figure 9"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 9
+
+# Setup
+
+```{r setup}
+library(scales)
+library(tidyverse)
+library(Seurat)
+
+thisseed <- 231103
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+```{r}
+seuobj.tnkilc <- readRDS("data/objects/annotated/predictCOL__CB_tnkilc_annotated_251017_v4.rds")
+seuobj.tnkilc
+```
+
+# Gene Expression
+
+
+```{r, fig.width=15, fig.height=6}
+PlotBoxplotsFeatures(seuobj.tnkilc@meta.data, 
+                     seurat = "seuobj.tnkilc", 
+                     sample.col = "cellstate",
+                     features = c("ICOS", "CCR7", "MAF", "PDCD1", "IL21", "CXCL13", 
+                                  "CXCR5", "BCL6", 
+                                  "PRDM1", "CCR5", "CCR2", "CX3CR1"),
+                     filterCol = "cellstate",
+                     filterVal = c("PD1Lo Tfh", "PD1Hi Tfh", "Prlf. Tfh"),
+                     exportObservationDF = T) %>% 
+  mutate(featureGroup = case_when(
+    featureVar %in% c("ICOS", "CCR7", "PDCD1", "CXCL13", "IL21", "MAF")  ~ "B Cell Help",
+    featureVar %in% c("BCL6", "CXCR5") ~ "Tfh",
+    featureVar %in% c("PRDM1", "CCR2", "CCR5", "CX3CR1") ~ "Tph",
+  )) %>% 
+  mutate(featureGroup = fct_relevel(featureGroup, c("B Cell Help", "Tfh", "Tph"))) %>% 
+  group_by(cellstate, featureVar, .drop = FALSE) %>% 
+  mutate(meanVal = mean(featureVal, na.rm = T)) %>% 
+  mutate(seVal = sd(featureVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  distinct(cellstate, featureVar, .keep_all = T) %>% 
+ggplot(aes(y = meanVal, x = featureVar, fill = cellstate)) + 
+  geom_col(color = "black", position=position_jitterdodge(jitter.width = 0, seed = thisseed), width = 0.85) +
+  geom_errorbar(aes(ymin = meanVal - seVal, ymax = meanVal + seVal), width=0.3, linewidth=1, position=position_jitterdodge(jitter.width = 0, seed = thisseed)) +
+  scale_fill_manual(values = c("#E6E6FA", "#A020F0", "#e07b91")) +
+  facet_grid(~featureGroup, scales = "free", space = "free") +
+  theme_classic2() +
+  labs(
+    title = NULL,
+    y = "Mean Expression",
+    fill = NULL
+  ) +
+  theme(
+    axis.title.y = element_text(size=20, face = "bold"),
+    axis.text.x = element_text(size=20, face = "bold"),
+    axis.text.y = element_text(size=20, face = "bold"),
+    legend.position = "top", 
+    legend.direction = "horizontal",
+    legend.text = element_text(size=28, face = "bold"),
+    strip.text = element_text(size=28, face = "bold", color = "black"),
+    strip.background = element_rect(color = "black", fill = "white")
+  ) +
+  labs(x = NULL, fill = NULL) 
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

@@ -1,0 +1,426 @@
+---
+title: "Supplemental Table 9 - T Cell Feature Summary"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compile summary of Th1, Th17, and Tfh features into a single Excel file.
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(tidyverse)
+library(writexl)
+
+thisseed <- 231103
+
+source("../functions/ComparisonPlottingFxns.R")
+
+`%notin%` <- Negate(`%in%`)
+
+logInf <- function(x){ifelse(x == 0, log(1/1000), log(x))}
+```
+
+# Read Data
+
+## Seurat Object
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+## IL-17 Gene Sets
+
+```{r}
+il17.list <- lapply(list.files("data/decoupler/il17/wsum_kegg", full.names = T), 
+                    function(thispath) read_csv(thispath, show_col_types = F))
+
+il17.df <- plyr::ldply(il17.list)
+
+il17.df
+```
+
+```{r}
+il17.names <- c("Antimicrobial", "Chemokine", "Cytokine", "Remodeling")
+names(il17.names) <- c("il17af_antimicrobial", "il17af_chemokines", "il17af_cytokines", "il17af_remodeling")
+il17.names
+```
+
+```{r}
+seuobj <- AddMetaData(
+  seuobj,
+  il17.df %>% 
+    rename_with(~il17.names[.x], .cols = starts_with("il17af")) %>% 
+    column_to_rownames("barcode")
+)
+seuobj@meta.data
+```
+
+```{r}
+tnfjak.paths <- list.files("out/decoupler/progeny/mlm_tnfjak", full.names = T)
+tnfjak.paths
+
+tnfjak.paths <- tnfjak.paths[str_detect(tnfjak.paths, "estimate.csv")]
+tnfjak.paths
+```
+
+
+```{r}
+tnfjak.list <- lapply(tnfjak.paths, function(thispath) read_csv(thispath, show_col_types = F))
+
+tnfjak.df <- plyr::ldply(tnfjak.list)
+
+tnfjak.df
+```
+
+```{r}
+seuobj <- AddMetaData(
+  seuobj,
+  tnfjak.df %>% 
+    column_to_rownames("barcode")
+)
+seuobj@meta.data
+```
+
+## TCRs
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+```
+
+```{r}
+seuobj <- AddMetaData(seuobj,
+            tcrs %>% select(-data_folder) %>% mutate(cdr3.Paired = paste(cdr3.TRA, cdr3.TRB, sep = "_")) %>% column_to_rownames("barcode"))
+seuobj@meta.data %>% filter(celltype == "TNKILC")
+```
+
+## mTiRP
+
+```{r}
+tirp <- read_csv("out/tcr/tirp/241120_predictCOL_tirp.csv")
+tirp
+```
+
+```{r}
+seuobj <- AddMetaData(seuobj,
+                      seuobj@meta.data %>% 
+                        rownames_to_column("barcode") %>% 
+                        left_join(
+                          .,
+                          tirp %>% distinct(cdr3, .keep_all = T), 
+                          by = c("cdr3.TRB" = "cdr3")
+                        ) %>% 
+                        column_to_rownames("barcode") %>% 
+                        filter(celltype == "TNKILC") %>% 
+                        select(setdiff(colnames(tirp), "cdr3"))
+            
+)
+seuobj@meta.data %>% filter(celltype == "TNKILC")
+```
+
+# Calculate Features
+
+## Cellstate Frequency
+
+```{r}
+PlotBoxplotsProp(
+  seuobj@meta.data %>% droplevels,
+  ann.col = "cellstate",
+  filterCol = "cellstate",
+  filterVal = c("Th1", "Th17", "PD1Hi Tfh", "IgG1 PC"),
+  relative.to = "celltype",
+  minDenomFreq = 10,
+  exportDF = T
+) %>% 
+  pivot_wider(id_cols = biopsy, names_from = cellstate, values_from = prop) -> props.cellstates
+
+props.cellstates
+```
+
+## mTiRP
+
+```{r}
+PlotBoxplotsFeatures(
+  seuobj@meta.data %>% filter(!is.na(cdr3.TRB)),
+  features = c("mTiRP"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Tfh"),
+  minDenomFreq = 50,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellsubtype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  pivot_wider(id_cols = biopsy, names_from = featureVar, values_from = meanVal) -> mtirp.df
+
+mtirp.df
+```
+
+## TNF Scoring
+
+```{r}
+PlotBoxplotsFeatures(
+  seuobj@meta.data %>% 
+    mutate("dummy" = factor("dummy")) %>% 
+    filter(celltype %in% c("Myeloid", "TNKILC")) %>% 
+    droplevels,
+  seurat = "seuobj",
+  features = c("TNFa"),
+  relative.to = "dummy",
+  filterCol = "celltype",
+  filterVal = c("Myeloid", "TNKILC"),
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, dummy, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  pivot_wider(id_cols = biopsy, names_from = featureVar, values_from = meanVal) -> tnf.out
+
+tnf.out
+```
+
+## IL-17 Gene Sets
+
+```{r}
+PlotBoxplotsFeatures(
+  seuobj@meta.data,
+  seurat = "seuobj",
+  features = c("Antimicrobial", "Chemokine"),
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("ColEpi"),
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup()%>% 
+  pivot_wider(id_cols = biopsy, names_from = featureVar, values_from = meanVal)-> il17.out
+
+il17.out
+```
+
+## Geometric Mean
+
+```{r}
+CellFreqDF <- PlotBoxplotsProp(df = seuobj@meta.data %>% 
+                                 add_count(cellstate, name = "cellstate_count") %>% filter(cellstate_count >= 100) %>%
+                                 droplevels,
+                 ann.col = "cellstate", 
+                 relative.to = "celltype", 
+                 exportDF = T
+                ) %>% 
+  complete(biopsy, cellstate, fill = list(annotation.freq = 0, denominator.freq = 0, prop = 0), explicit = TRUE) %>% 
+  group_by(biopsy) %>% 
+  fill(diagSub) %>% 
+  group_by(cellstate) %>% 
+  fill(celltype) %>% 
+  ungroup
+
+CellFreqDF
+```
+
+
+```{r}
+CellFreqDF.wide <- CellFreqDF %>% 
+  pivot_wider(id_cols = c(biopsy, diagSub), names_from = cellstate, values_from = prop)
+
+CellFreqDF.wide
+```
+
+
+```{r}
+corr.list <- list(
+  "Th1" = c("TFPI2Hi Fibro.", "Inflm. Mac", "Th1", "Treg", "XCL+ NK"),
+  "Th17" = c("Inflm. Mac","CCL24+ Gob.", "LGR5+ Epi.", "SAA+ Epi.", "Venule", "PDPNHi Fibro.", "Inflm. Mac", "MNP", "Th17", "Prlf. Teff"),
+  "PD1Hi Tfh" = c("SAA+ Epi.", "PDPNHi Fibro.", "IgG1 PC", "GC-like BC", "Plasmablast", "Prlf. BC", "PD1Hi Tfh")
+)
+corr.list
+```
+
+
+```{r}
+CellFreqDF.wide.scored <- CellFreqDF.wide %>% 
+  rowwise %>%
+  mutate(geommean.th1 = pick(all_of(corr.list$Th1)) %>% as.matrix %>% logInf %>% rowMeans(., na.rm = T) %>% exp, .before = biopsy) %>% 
+  mutate(geommean.th17 = pick(all_of(corr.list$Th17)) %>% as.matrix %>% logInf %>% rowMeans(., na.rm = T) %>% exp, .before = biopsy) %>% 
+  mutate(geommean.tfh = pick(all_of(corr.list$`PD1Hi Tfh`)) %>% as.matrix %>% logInf %>% rowMeans(., na.rm = T) %>% exp, .before = biopsy) %>% 
+  ungroup %>% 
+  right_join(seuobj@meta.data %>% select(biopsy, antitnf_response, severity_score, severity_score_range, participant_id, timepoint) %>% distinct(biopsy, .keep_all = T), ., by = "biopsy")
+
+
+CellFreqDF.wide.scored
+```
+
+```{r}
+geommean.df <- CellFreqDF.wide.scored %>% 
+  select(biopsy, starts_with("geommean")) %>% 
+  rename_with(.cols = starts_with("geommean"), .fn = ~str_replace(., "geommean.t", "GeomMean_T"))
+geommean.df
+```
+
+## Canonical Cytokines
+
+```{r}
+PlotBoxplotsFeatures(
+  seuobj@meta.data ,
+  seurat = "seuobj",
+  features = c("IFNG","TNF","IL17A"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellsubtype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  pivot_wider(id_cols = biopsy, names_from = featureVar, values_from = meanVal) -> features.thelper
+
+features.thelper
+```
+
+```{r}
+PlotBoxplotsFeatures(
+  seuobj@meta.data ,
+  seurat = "seuobj",
+  features = c("CXCL13"),
+  relative.to = "cellsubtype",
+  filterCol = "cellsubtype",
+  filterVal = c("Thelper"),
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, cellsubtype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  pivot_wider(id_cols = biopsy, names_from = featureVar, values_from = meanVal) -> features.tfh
+
+features.tfh
+```
+
+## STAT1
+
+```{r}
+PlotBoxplotsFeatures(
+  seuobj@meta.data %>% mutate(dummy = factor("dummy")),
+  seurat = "seuobj",
+  features = c("STAT1"),
+  relative.to = "dummy",
+  filterCol = "celltype",
+  filterVal = c("Myeloid", "TNKILC"),
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  group_by(diagSub, dummy, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  pivot_wider(id_cols = biopsy, names_from = featureVar, values_from = meanVal) -> features.stat1
+
+features.stat1
+```
+
+# Combine into DataFrame
+
+```{r}
+biopsies.df <- seuobj@meta.data %>% 
+  distinct(biopsy, diagSub, participant_id, timepoint, antitnf_response) %>% arrange(biopsy) %>% 
+  mutate(huprot = ifelse(participant_id %in% c("001-036", "001-038"), "ENO1+", "ENO1-")) %>% 
+  mutate(huprot = fct_relevel(huprot, c("ENO1+", "ENO1-"))) %>% 
+  filter(participant_id %notin% c("003-030", "003-034", "003-036", "003-051")) # remove participants w/o HuProt data
+  
+biopsies.df
+```
+
+
+```{r}
+combined.df <- biopsies.df %>% 
+  inner_join(.,props.cellstates,by = "biopsy") %>% 
+  inner_join(.,geommean.df,by = "biopsy") %>% 
+  inner_join(.,features.thelper,by = "biopsy") %>% 
+  inner_join(.,features.tfh,by = "biopsy") %>% 
+  inner_join(.,features.stat1,by = "biopsy") %>% 
+  inner_join(.,tnf.out,by = "biopsy") %>% 
+  inner_join(.,il17.out,by = "biopsy") %>% 
+  inner_join(.,mtirp.df,by = "biopsy")
+
+combined.df
+```
+
+```{r}
+combined.df.scaled <- combined.df %>% 
+  mutate_at(vars(-biopsy:-huprot), scales::rescale)
+
+combined.df.scaled
+```
+
+
+
+```{r}
+combined.df.scaled.plot <- combined.df.scaled %>% 
+  rowwise %>% 
+  mutate(`Th1\nFeatures` = mean(c(Th1, GeomMean_Th1, IFNG, STAT1, TNFa))) %>% 
+  mutate(`Th17\nFeatures` = mean(c(Th17, GeomMean_Th17, IL17A, Antimicrobial, Chemokine))) %>%
+  mutate(`PD1Hi Tfh\nFeatures` = mean(c(`PD1Hi Tfh`, `IgG1 PC`, GeomMean_Tfh, CXCL13,  mTiRP))) %>% 
+  select(-`IgG1 PC`:-`mTiRP`) %>% 
+  ungroup %>% 
+  drop_na
+
+combined.df.scaled.plot
+```
+
+
+```{r}
+combined.df.scaled.plot %>% count(diagSub, timepoint, antitnf_response)
+```
+
+```{r}
+combined.df.scaled.plot %>% filter(diagSub == "UC" & timepoint == "T0") %>%  count(huprot)
+```
+
+# Combine Lists
+
+```{r}
+summary.out <- list(
+  "Key" = data.frame(),
+  "Score Raw" = combined.df,
+  "Score Scaled" = combined.df.scaled,
+  "Score Scaled Summary" = combined.df.scaled.plot
+) 
+  
+summary.out
+```
+
+```{r}
+write_xlsx(summary.out, 
+           path = "out/tables/Supplemental Table 9 - Summary.xlsx", 
+           col_names = TRUE, 
+           format_headers = TRUE, 
+)
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+

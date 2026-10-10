@@ -1,0 +1,517 @@
+---
+title: "Supplemental Figure 7"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Supplemental Figure 7
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(ggpmisc)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+colCelltypes <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+names(colCelltypes) <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+
+`%notin%` <- Negate(`%in%`)
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+## Seurat Object
+
+```{r}
+seuobj <- readRDS("data/objects/annotated/predictCOL__CB_allcells_annotated_251017_v4.rds")
+seuobj
+```
+
+## Obs
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+## IL-17
+
+```{r}
+il17.paths <- list.files("data/decoupler/il17/wsum_kegg", full.names = T)
+il17.paths
+```
+
+```{r}
+il17.list <- lapply(il17.paths, function(thispath) read_csv(thispath, show_col_types = F))
+
+il17.df <- plyr::ldply(il17.list)
+
+il17.df
+
+il17.sets <- il17.df %>% colnames %>% setdiff(., "barcode")
+il17.sets
+
+il17.names <- c("Antimicrobial", "Chemokine", "Cytokine", "Remodeling")
+names(il17.names) <- il17.sets
+il17.names
+
+il17.df <- il17.df %>% rename_with(~il17.names[.x], .cols = starts_with("il17af"))
+il17.df
+```
+
+```{r}
+obs.dc <- il17.df %>% 
+  left_join(obs.dc %>% rownames_to_column("barcode"), .,  by = "barcode")
+
+obs.dc %>% select(colnames(il17.df))
+```
+
+```{r}
+seuobj <- AddMetaData(
+  seuobj,
+  il17.df %>% 
+    column_to_rownames("barcode")
+)
+seuobj@meta.data
+```
+
+# IL-17 Activity
+
+```{r, fig.width=12, fig.height=5}
+PlotBoxplotsFeatures(
+  obs.dc %>% filter(timepoint == "T0") %>%  droplevels,
+  features = unname(il17.names),
+  relative.to = "celltype",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(featureVar = fct_relevel(featureVar, il17.names)) %>% 
+  group_by(celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = celltype, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean", aes(color = celltype), lwd = 1, fill = "gray80") +
+  geom_point(shape = 21, position = position_jitter(width = 0.3, seed = thisseed), aes(fill = diagSub), size = 3) +
+  geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width=0.3, linewidth=1) +
+  facet_grid(~featureVar, scales = "free_y") +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = colCelltypes) +
+  labs(
+    y = "Gene Set Mean Score",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold", angle = 90),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  ) + 
+  guides(color = guide_legend(nrow = 1))
+```
+
+```{r, fig.width=30, fig.height=5}
+SenderReceiver(
+  seuobj@meta.data %>% filter(timepoint == "T0") %>% filter(diagSub %in% c("cCD", "UC")) %>% droplevels,
+  seurat = "seuobj",
+  senderCol = "cellsubtype",
+  senderVal = "Thelper",
+  features.sender = c("IL17A"),
+  senderProp = FALSE,
+  senderRelative = "cellsubtype",
+  minSenderFreq = 10,
+  receiverCol = "celltype",
+  receiverVal = c("ColEpi", "Stroma", "Myeloid"),
+  features.receiver = unname(il17.names),
+  receiverProp = FALSE,
+  receiverRelative = "celltype",
+  minReceiverFreq = 10,
+  facetType = "grid",
+  facet_scales = "free_x",
+  facet_dir = "v",
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  ncol = 4,
+  stripSize = 14,
+  axisXsize = 16,
+  axisYsize = 16,
+  regSize = 5,
+  groupReg = F,
+  fillReg = F,
+  exportSampleDF = T
+) %>%
+  mutate(receiverName = case_when(
+    receiverName == "ColEpi_Antimicrobial" ~ "ColEpi - Antimicrobial",
+    receiverName == "ColEpi_Chemokine" ~ "ColEpi - Chemokine",
+    receiverName == "Stroma_Chemokine" ~ "Stroma - Chemokine",
+    receiverName == "Stroma_Remodeling" ~ "Stroma - Remodeling",
+    receiverName == "Myeloid_Antimicrobial" ~ "Myeloid - Antimicrobial",
+    receiverName == "Myeloid_Chemokine" ~ "Myeloid - Chemokine",
+    receiverName == "Myeloid_Cytokine" ~ "Myeloid - Cytokine",
+    receiverName == "Myeloid_Remodeling" ~ "Myeloid - Remodeling"
+  )) %>% 
+  filter(!is.na(receiverName)) %>% 
+  mutate(receiverName = fct_relevel(receiverName, c(
+    "ColEpi - Antimicrobial",
+    "ColEpi - Chemokine",
+    "Stroma - Chemokine",
+    "Stroma - Remodeling",
+    "Myeloid - Antimicrobial",
+    "Myeloid - Chemokine",
+    "Myeloid - Cytokine",
+    "Myeloid - Remodeling"
+  ))) %>% 
+  ggplot(aes(y = receiverExp, x = senderExp)) +
+  stat_poly_line(method = "lm", lwd=2.5, color =  "#3366FF") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")),
+               rsquared.conf.level = 0.9999, size = 8) +
+  geom_point(aes(fill = diagSub), shape = 21, size = 4.5, alpha = 0.9, stroke = 1.5) +
+  scale_size_continuous(range = c(2, 7)) +
+  scale_fill_manual(values = diagSubColVec) +
+  facet_grid(~receiverName, scales = "free") +
+  labs(
+    x = "Mean IL17A Gene Expression (Thelper)", 
+    y = "Gene Set Mean Score", 
+    size = "# Cells", 
+    shape = NULL,
+    fill = NULL,
+    color = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 20, face = "bold", angle = 0, hjust=0.5),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_text(size = 24, face = "bold"),
+    axis.title.y = element_text(size = 24, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 23, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+    plot.margin = unit(c(0.25, 0.5, 0.25, 0.25), "cm")
+  )
+```
+
+```{r, fig.width=5.5, fig.height=4}
+PlotBoxplotsFeatures(
+  obs.dc %>% filter(timepoint == "T0") %>%  droplevels,
+  features = c("Antimicrobial", "Chemokine"),
+  relative.to = "celltype",
+  filterCol = "celltype",
+  filterVal = c("ColEpi"),
+  xVar = "diagSub",
+  fillVar = "antitnf_response",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T,
+)  %>% 
+  group_by(diagSub, celltype, featureVar, .drop = FALSE) %>% 
+  mutate(mean = mean(meanVal, na.rm = T)) %>% 
+  mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+  ungroup() %>% 
+  ggplot(aes(x = diagSub, y = meanVal)) + 
+  geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+  geom_point(shape = 21, size = 4, position = position_jitter(width = 0.2), aes(fill = diagSub)) +
+  scale_fill_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.6, size = 4.5, tip.length = 0.05) +
+  facet_grid(~featureVar, scales = "free_y") +
+  labs(
+    y = "Mean Gene Set Score\nin Colonic Epithelium",
+    color = NULL,
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 18, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# Gene Expression
+
+```{r, fig.width=18, fig.height=4}
+PlotBoxplotsFeatures(
+    seuobj@meta.data %>% filter(timepoint == "T0") %>%  droplevels,
+    seurat = "seuobj",
+    features = c("MUC5B", "LCN2", "S100A9", "PI3", "CXCL1", "CXCL2", "CXCL3"),
+    relative.to = "celltype",
+    filterCol = "celltype",
+    filterVal = c("ColEpi"),
+    xVar = "diagSub",
+    fillVar = "diagSub",
+    ncol = 10,
+    facetType = "grid",
+    facet_scales = "free_y",
+    swap_facets = F,
+    facet_dir = "v",
+    minDenomFreq = 10,
+    plotTitle = NULL,
+    exportSampleDF = T,
+)  %>% 
+    group_by(diagSub, celltype, featureVar, .drop = FALSE) %>% 
+    mutate(mean = mean(meanVal, na.rm = T)) %>% 
+    mutate(se = sd(meanVal, na.rm = T)/sqrt(n())) %>%
+    ungroup() %>% 
+    ggplot(aes(x = diagSub, y = meanVal)) + 
+    geom_bar(stat = "summary", fun = "mean", color = "black", fill = "gray90") +
+    geom_point(shape = 21, size = 4, position = position_jitter(width = 0.3), aes(fill = diagSub)) +
+    facet_wrap(~featureVar, scales = "free_y", ncol=10) +
+    scale_fill_manual(values = diagSubColVec) +
+    stat_compare_means(comparisons = diagSub.comp, label = "p.format", vjust = 1.7, size = 5, tip.length = 0.05) +
+    labs(
+        y = "Mean Expression\nin Colonic Epithelium",
+        color = NULL,
+        fill = NULL,
+        title = NULL,
+        subtitle = NULL) +
+    theme_light() +
+    theme(
+        plot.title = element_text(size = 24, face = "bold"),
+        plot.subtitle = element_text(size = 18, face = "bold"),
+        panel.grid.major.x = element_blank(),
+        axis.text.x = element_text(size = 16, face = "bold"),
+        axis.text.y = element_text(size = 12, face = "bold"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size = 16, face = "bold"),
+        legend.position = "none",
+        legend.text = element_text(size = 12, face = "bold"),
+        legend.title = element_text(size = 12, face = "bold"),
+        strip.text = element_text(size = 16, face = "bold", color = "black"),
+        strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+        panel.spacing.x = unit(0.35, "cm")
+    )
+```
+
+# IHC
+
+```{r}
+p20 <- readRDS("out/ihc/panimmune/panel20_long.rds")
+p20
+```
+
+```{r}
+p20.tojoin <- p20 %>% 
+  filter(str_ends(colon_site_ihc, "-2", negate = T)) %>% # remove 2nd 001-047 sample
+  filter(participant_id %in% obs$participant_id) %>% 
+  dplyr::rename(colon_site_ihc_p20 = colon_site_ihc) %>% 
+  select(participant_id, colon_site_ihc_p20, colon_site_rna, area, `BCMA+`:`NCR1+`) %>% 
+  pivot_longer(cols = `BCMA+`:`NCR1+`, names_to = "marker", values_to = "density")
+  
+p20.tojoin
+```
+
+```{r}
+il17.tojoin <- PlotBoxplotsFeatures(
+  obs.dc %>% filter(timepoint == "T0") %>%  droplevels,
+  features = il17.names,
+  relative.to = "celltype",
+  ncol = 10,
+  facetType = "grid",
+  facet_scales = "free_y",
+  swap_facets = F,
+  facet_dir = "v",
+  minDenomFreq = 10,
+  plotTitle = NULL,
+  exportSampleDF = T
+)  %>% 
+  mutate(geneset = fct_recode(featureVar, !!!setNames(names(il17.names), il17.names))) %>%
+  rename(genescore = meanVal) %>% 
+  select(biopsy, participant_id, celltype, diagSub, antitnf_response, timepoint, geneset, genescore) 
+
+il17.tojoin
+```
+
+```{r}
+# patient IDs where IHC biopsy and scRNA-seq biopsy are not confirmed to be same area of colon
+
+p20.discordant <- c(
+  "001-022",
+  "001-026",
+  "003-010",
+  "003-016",
+  "003-024",
+  "003-026",
+  "003-027",
+  "003-034",
+  "003-039",
+  "003-046",
+  "003-051"
+)
+
+p20.unknown <- c(
+  "001-057",
+  "003-001",
+  "003-004",
+  "003-006",
+  "003-007"
+)
+```
+
+```{r}
+il17.p20 <- inner_join(il17.tojoin, p20.tojoin, by = "participant_id") %>% 
+    mutate(concordance = case_when(
+    participant_id %in% p20.unknown ~ "Not specified",
+    participant_id %in% p20.discordant ~ "Discordant",
+    participant_id %notin% c(p20.discordant, p20.unknown) ~ "Concordant" 
+  ),
+  .after = participant_id) %>% 
+  arrange(biopsy)
+
+il17.p20
+```
+
+```{r, fig.width=5.75, fig.height=6}
+il17.p20 %>% 
+  filter(diagSub %in% c("cCD", "UC")) %>%
+  filter(celltype == "ColEpi") %>% 
+  filter(geneset %in% c("Chemokine")) %>% 
+  filter(marker == "MPO+") %>% 
+  filter(area == "EPI") %>% 
+  ggplot(., aes(x = genescore, y = density)) +
+  geom_point(aes(fill = diagSub), shape = 21, size = 5, stroke = 1.25,
+             alpha = 0.75) +
+  scale_fill_manual(values = diagSubColVec) +
+  stat_poly_line(method = "lm", lwd=2.5, color =  "#3366FF") +
+  stat_poly_eq(method = "lm", use_label(c("R2", "P")),
+               rsquared.conf.level = 0.9999, size = 8) +
+  scale_y_continuous(breaks = seq(0,600,100)) +
+  labs(
+    x = "Mean Chemokine Gene Set Score\n(scRNA-seq Colonic Epithelium)", 
+    y = "MPO+ Count / mm2\n(IHC Epithelial Layer)", 
+    shape = NULL,
+    fill = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 18, face = "bold"),
+    axis.text.y = element_text(size = 18, face = "bold"),
+    axis.title.x = element_text(size = 20, face = "bold"),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    legend.position = "bottom",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 24, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+```{r}
+p20.tojoin
+```
+
+
+```{r}
+p20.df.wide <- p20 %>% filter(!is.na(diagSub)) %>% 
+  mutate(sample_id = paste(participant_id, colon_site_ihc, area, sep = "_")) %>% 
+  relocate(sample_id) %>% 
+  filter(participant_id %in% metadata$participant_id) %>% 
+  filter(!is.na(area)) %>% 
+  filter(str_ends(colon_site_ihc, "-2", negate = T))
+
+p20.df.wide
+
+p20.df.long <- p20.df.wide %>% 
+  pivot_longer(`BCMA+`:`NCR1+`, names_to = "marker", values_to = "density") 
+
+p20.df.long
+
+p20.df.long.avg <- p20.df.long %>% 
+  group_by(participant_id, area, marker) %>% 
+  mutate(density.mean = mean(density)) %>% 
+  distinct(participant_id, area, marker, .keep_all = T) %>% 
+  ungroup
+
+p20.df.long.avg
+```
+
+```{r, fig.width=5.5, fig.height=4}
+p20.tojoin %>% 
+  filter(marker == "MPO+" & area %in% c("EPI", "LP")) %>% 
+  left_join(obs %>% distinct(participant_id, diagSub), by = "participant_id") %>% 
+  ggplot(aes(x = diagSub, y = density)) + 
+  geom_dotplot(binaxis = "y", stackdir = "center", aes(fill = diagSub), dotsize = 1.5, stackratio = 1) +
+  stat_summary(fun.data = "mean_cl_boot", geom = "errorbar", width = 0.4, lwd=0.5, color = "black") +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6) +
+  scale_fill_manual(values = diagSubColVec) +
+  scale_color_manual(values = diagSubColVec) +
+  stat_compare_means(comparisons = diagSub.comp,
+                     label = "p.format", vjust = 1.5, size = 5, tip.length = 0.05) +
+  scale_y_continuous(trans = "log10") +
+  facet_grid(~area, labeller = as_labeller(c("EPI" = "Epithelium", "LP" = "Lamina Propria"))) +
+  labs(
+    y = bquote('MPO+ Count per'~mm^2),
+    fill = NULL,
+    title = NULL,
+    subtitle = NULL) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 24, face = "bold"),
+    plot.subtitle = element_text(size = 18, face = "bold"),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_text(size = 20, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 16, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 16, face = "bold", color = "black"),
+    strip.background = element_rect(fill = "white", colour = "black", linewidth = 1),
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

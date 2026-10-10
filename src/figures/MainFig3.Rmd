@@ -1,0 +1,567 @@
+---
+title: "Main Figure 3"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will make plots for Main Figure 3
+
+# Setup
+
+```{r setup}
+library(Seurat)
+library(scales)
+library(tidyverse)
+library(tidygraph)
+library(ggraph)
+library(viridis)
+library(nichenetr)
+library(multinichenetr)
+
+thisseed <- 231103
+
+colFGID <- "#1E88E5"
+coliCD <- "#55D276"
+colcCD <- "#FFC107"
+colUC <- "#D81B60"
+diagSubColVec <- c("FGID"=colFGID, "iCD" = coliCD, "cCD"=colcCD, "UC"=colUC)
+
+diagSub.comp <- list(c("FGID", "cCD"), c("iCD", "cCD"), c("cCD", "UC"), c("FGID", "UC"))
+
+colCelltypes <- RColorBrewer::brewer.pal(n = 7, "Set1")[c(1:5,7)]
+names(colCelltypes) <- c("ColEpi", "Stroma", "Myeloid", "Plasma", "BCell", "TNKILC")
+
+`%notin%` <- Negate(`%in%`)
+
+logInf <- function(x){ifelse(x == 0, log(1/1000), log(x))}
+
+moveNode <- function(thistblgraph, name, xnudge = 0, ynudge = 0){
+  thisrow <- which(thistblgraph$name == name)
+  thistblgraph[thisrow,"x"] <- thistblgraph[thisrow,"x"] + xnudge
+  thistblgraph[thisrow,"y"] <- thistblgraph[thisrow,"y"] + ynudge
+  return(thistblgraph)
+}
+
+# From RColorBrewer::brewer.pal(12,)
+annoColVec <- c("IBDAssocEpi" = "#FB8072", "Venule" = "#8DD3C7", "IBDAssocFibro" = "#80B1D3", 
+                "IBDAssocMonoMac" = "#B3DE69", "IgGPC" = "#BEBADA", "GALTB" = "#FCCDE5",
+                "Thelper" = "#FDB462", "Tfh" = "#BC80BD", "Treg" = "#FFFFB3", "NK" = "#D9D9D9")
+
+nichenetannoVec <- names(annoColVec)
+
+contrast_tbl <-  tibble(contrast = 
+                        c(
+                          'cCD-UC',
+                          'UC-cCD'
+                        ),
+                      group = c("cCD","UC"))
+
+source("../functions/ComparisonPlottingFxns.R")
+```
+
+# Correlation
+
+```{r}
+obs <- readRDS("out/annotations/scvi/251017__predictCOL_CB_allcells_obs.rds")
+obs
+```
+
+
+```{r}
+cellstates <- obs %>% distinct(cellstate, .keep_all = T) %>% arrange(cellstate) %>% droplevels %>% pull(celltype, cellstate)
+cellstates
+```
+
+```{r}
+selectedCorrListNetworkDF <- read_csv("out/correlation/Th1Th17Tfh_Correlation_Edges.csv")
+selectedCorrListNetworkDF
+```
+
+```{r}
+CellFreqDF.wide.scored <- read_csv("out/correlation/Th1Th17Tfh_GeometricMeans.csv") %>%
+  mutate(diagSub = fct_relevel(diagSub, c("FGID", "iCD", "cCD", "UC")))
+
+CellFreqDF.wide.scored
+```
+
+## Networks
+
+```{r}
+corr.list <- list(
+  Th1 = selectedCorrListNetworkDF %>% filter(cellstate == "Th1") %>% select(from, to) %>% as.matrix %>%  as.vector %>% unique,
+  Th17 = selectedCorrListNetworkDF %>% filter(cellstate == "Th17") %>% select(from, to) %>% as.matrix %>%  as.vector %>% unique,
+  `PD1Hi Tfh` = selectedCorrListNetworkDF %>% filter(cellstate == "PD1Hi Tfh") %>% select(from, to) %>% as.matrix %>%  as.vector %>% unique
+)
+
+corr.list
+```
+
+
+```{r, fig.width=30, fig.height=10}
+minCorrFilter <- 0.35
+minCorrShow <- 0.5
+selectedCorrGGraph <- selectedCorrListNetworkDF %>%
+  arrange(correlation) %>% 
+  filter(correlation >= minCorrFilter) %>%
+  mutate(correlation = ifelse(correlation < minCorrShow, 0.1, correlation)) %>% 
+  group_by(cellstate) %>% 
+  as_tbl_graph %>% 
+  mutate(celltype = cellstates[name]) %>% 
+  activate("edges") %>% 
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "Th17", "PD1Hi Tfh"))) %>% 
+  ggraph(layout = 'kk', maxiter = 150) 
+
+th1shift <- -1
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "TFPI2Hi Fibro.", 0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Inflm. Mac", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th1", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Treg", th1shift+0.35, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "XCL+ NK", -0.5, 1)
+
+th17shift <- -0.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "CCL24+ Gob.", th17shift-0.35, 0.35)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "LGR5+ Epi.", th17shift-0.6, 0.25)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Venule", th17shift-0.6, 0.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "MNP", th17shift-0.8, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th17", th17shift+0, -0.2)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. Teff", th17shift-0.5, -0.1)
+
+tfhshift <- -2.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "SAA+ Epi.", -0.75, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PDPNHi Fibro.", -1.5, 0.4)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "IgG1 PC", tfhshift-0.2, 1.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "GC-like BC", tfhshift+0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Plasmablast", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. BC", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PD1Hi Tfh", tfhshift+0, 0.5)
+
+selectedCorrGGraph +
+  geom_edge_fan(aes(width = correlation + 0.25), color = "black") +
+  geom_edge_fan(aes(color = correlation, width = correlation)) +
+  geom_node_label(aes(label = name, 
+                      color = celltype), 
+                  fontface = "bold", size = 8, alpha = 1, label.size = 2) +
+  scale_color_manual(values = c(colCelltypes), na.value = "gray90", na.translate = F) +
+  labs(color = NULL) +
+  ggnewscale::new_scale("color") +
+  geom_node_label(aes(label = name), color = "black",
+                  fontface = "bold", size = 8, label.size = 0, show.legend = F) +
+  scale_edge_color_viridis(option = "magma", guide = "edge_colourbar", limits = c(minCorrFilter,1), breaks = c(0.4, 0.6, 0.8, 1)) +
+  guides(edge_width = "none") +
+  labs(
+    color = NULL,
+    edge_color = "Correlation"
+  ) +
+  facet_grid(~cellstate) +
+  theme_graph(foreground = 'black', fg_text_colour = 'white', plot_margin = unit(c(0.25,0.25,0.25,0.25), "cm"), border = F) + 
+  coord_cartesian(clip = "on", expand = T) +
+  theme(
+    strip.text = element_text(face = "bold", size = 36),
+    legend.title = element_text(face = "bold", size = 24),
+    legend.text = element_text(face = "bold", size = 24),
+    legend.position = "right",
+    legend.spacing.y = unit(10, "mm"),
+    legend.key.height = unit(1.2, "cm"),
+    panel.spacing.x = unit(0.5,"cm"),
+    plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"),
+    panel.border = element_rect(fill=NA, linewidth=2),
+  )  +
+  expand_limits(x = -0.45) +
+  guides(edge_color = guide_edge_colorbar(barheight = 10)) 
+```
+
+```{r, fig.width=30, fig.height=10}
+minCorrFilter <- 0.35
+minCorrShow <- 0.5
+selectedCorrGGraph <- selectedCorrListNetworkDF %>%
+  arrange(correlation) %>% 
+  filter(correlation >= minCorrFilter) %>%
+  mutate(correlation = ifelse(correlation < minCorrShow, 0.1, correlation)) %>% 
+  group_by(cellstate) %>% 
+  as_tbl_graph %>% 
+  mutate(celltype = cellstates[name]) %>% 
+  activate("edges") %>% 
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "Th17", "PD1Hi Tfh"))) %>% 
+  ggraph(layout = 'kk', maxiter = 150) 
+
+th1shift <- -1
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "TFPI2Hi Fibro.", 0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Inflm. Mac", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th1", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Treg", th1shift+0.35, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "XCL+ NK", -0.5, 1)
+
+th17shift <- -0.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "CCL24+ Gob.", th17shift-0.35, 0.35)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "LGR5+ Epi.", th17shift-0.6, 0.25)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Venule", th17shift-0.6, 0.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "MNP", th17shift-0.8, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th17", th17shift+0, -0.2)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. Teff", th17shift-0.5, -0.1)
+
+tfhshift <- -2.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "SAA+ Epi.", -0.75, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PDPNHi Fibro.", -1.5, 0.4)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "IgG1 PC", tfhshift-0.2, 1.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "GC-like BC", tfhshift+0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Plasmablast", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. BC", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PD1Hi Tfh", tfhshift+0, 0.5)
+
+selectedCorrGGraph +
+  geom_edge_fan(aes(width = correlation + 0.25), color = "black") +
+  geom_edge_fan(aes(color = correlation, width = correlation)) +
+  geom_node_label(aes(label = name, 
+                      color = ifelse(name %in% corr.list$Th1, as.character(celltype), NA)), 
+                  fontface = "bold", size = 8, alpha = 1, label.size = 4, label.padding = unit(0, "lines")) +
+  scale_color_manual(values = c(colCelltypes), na.value = "gray90", na.translate = F) +
+  labs(color = NULL) +
+  ggnewscale::new_scale("color") +
+  geom_node_label(aes(label = name, color = ifelse(name %in% corr.list$Th1, "show", "hide")),
+                  fontface = "bold", size = 8, label.size = 0, show.legend = F, label.padding = unit(0, "lines")) +
+  scale_color_manual(values = c("show" = "black", "hide" = "gray65")) +
+  scale_edge_color_viridis(option = "magma", guide = "edge_colourbar", limits = c(minCorrFilter,1), breaks = seq(minCorrShow, 1, 0.1)) +
+  guides(edge_width = "none") +
+  labs(
+    color = NULL,
+    edge_color = "Correlation"
+  ) +
+  facet_grid(~cellstate) +
+  theme_graph(foreground = 'black', fg_text_colour = 'white', plot_margin = unit(c(0.25,0.25,0.25,0.25), "cm"), border = F) + 
+  coord_cartesian(clip = "on") +
+  theme(
+    strip.text = element_text(family = "bold", size = 36),
+    legend.title = element_text(family = "bold", size = 24),
+    legend.text = element_text(family = "bold", size = 24),
+    legend.position = "right",
+    legend.spacing.y = unit(10, "mm"),
+    legend.key.height = unit(1.4, "cm"),    
+    panel.spacing.x = unit(0.5,"cm"),
+    plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"),
+    panel.border = element_rect(fill=NA, size=2)
+  )  +
+  expand_limits(x = -0.45) +
+  guides(edge_color = guide_edge_colorbar(barheight = 10))
+```
+
+```{r, fig.width=30, fig.height=10}
+minCorrFilter <- 0.35
+minCorrShow <- 0.5
+selectedCorrGGraph <- selectedCorrListNetworkDF %>%
+  arrange(correlation) %>% 
+  filter(correlation >= minCorrFilter) %>%
+  mutate(correlation = ifelse(correlation < minCorrShow, 0.1, correlation)) %>% 
+  group_by(cellstate) %>% 
+  as_tbl_graph %>% 
+  mutate(celltype = cellstates[name]) %>% 
+  activate("edges") %>% 
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "Th17", "PD1Hi Tfh"))) %>% 
+  ggraph(layout = 'kk', maxiter = 150) 
+
+th1shift <- -1
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "TFPI2Hi Fibro.", 0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Inflm. Mac", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th1", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Treg", th1shift+0.35, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "XCL+ NK", -0.5, 1)
+
+th17shift <- -0.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "CCL24+ Gob.", th17shift-0.35, 0.35)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "LGR5+ Epi.", th17shift-0.6, 0.25)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Venule", th17shift-0.6, 0.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "MNP", th17shift-0.8, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th17", th17shift+0, -0.2)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. Teff", th17shift-0.5, -0.1)
+
+tfhshift <- -2.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "SAA+ Epi.", -0.75, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PDPNHi Fibro.", -1.5, 0.4)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "IgG1 PC", tfhshift-0.2, 1.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "GC-like BC", tfhshift+0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Plasmablast", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. BC", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PD1Hi Tfh", tfhshift+0, 0.5)
+
+selectedCorrGGraph +
+  geom_edge_fan(aes(width = correlation + 0.25), color = "black") +
+  geom_edge_fan(aes(color = correlation, width = correlation)) +
+  geom_node_label(aes(label = name, 
+                      color = ifelse(name %in% corr.list$Th17, as.character(celltype), NA)), 
+                  fontface = "bold", size = 8, alpha = 1, label.size = 4, label.padding = unit(0, "lines")) +
+  scale_color_manual(values = c(colCelltypes), na.value = "gray90", na.translate = F) +
+  labs(color = NULL) +
+  ggnewscale::new_scale("color") +
+  geom_node_label(aes(label = name, color = ifelse(name %in% corr.list$Th17, "show", "hide")),
+                  fontface = "bold", size = 8, label.size = 0, show.legend = F, label.padding = unit(0, "lines")) +
+  scale_color_manual(values = c("show" = "black", "hide" = "gray65")) +
+  scale_edge_color_viridis(option = "magma", guide = "edge_colourbar", limits = c(minCorrFilter,1), breaks = seq(minCorrShow, 1, 0.1)) +
+  guides(edge_width = "none") +
+  labs(
+    color = NULL,
+    edge_color = "Correlation"
+  ) +
+  facet_grid(~cellstate) +
+  theme_graph(foreground = 'black', fg_text_colour = 'white', plot_margin = unit(c(0.25,0.25,0.25,0.25), "cm"), border = F) + 
+  coord_cartesian(clip = "on") +
+  theme(
+    strip.text = element_text(family = "bold", size = 36),
+    legend.title = element_text(family = "bold", size = 24),
+    legend.text = element_text(family = "bold", size = 24),
+    legend.position = "right",
+    legend.spacing.y = unit(10, "mm"),
+    legend.key.height = unit(1.4, "cm"),    
+    panel.spacing.x = unit(0.5,"cm"),
+    plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"),
+    panel.border = element_rect(fill=NA, size=2)
+  )  +
+  expand_limits(x = -0.45) +
+  guides(edge_color = guide_edge_colorbar(barheight = 10))
+```
+
+```{r, fig.width=30, fig.height=10}
+minCorrFilter <- 0.35
+minCorrShow <- 0.5
+selectedCorrGGraph <- selectedCorrListNetworkDF %>%
+  arrange(correlation) %>% 
+  filter(correlation >= minCorrFilter) %>%
+  mutate(correlation = ifelse(correlation < minCorrShow, 0.1, correlation)) %>% 
+  group_by(cellstate) %>% 
+  as_tbl_graph %>% 
+  mutate(celltype = cellstates[name]) %>% 
+  activate("edges") %>% 
+  mutate(cellstate = fct_relevel(cellstate, c("Th1", "Th17", "PD1Hi Tfh"))) %>% 
+  ggraph(layout = 'kk', maxiter = 150) 
+
+th1shift <- -1
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "TFPI2Hi Fibro.", 0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Inflm. Mac", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th1", th1shift, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Treg", th1shift+0.35, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "XCL+ NK", -0.5, 1)
+
+th17shift <- -0.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "CCL24+ Gob.", th17shift-0.35, 0.35)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "LGR5+ Epi.", th17shift-0.6, 0.25)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Venule", th17shift-0.6, 0.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "MNP", th17shift-0.8, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Th17", th17shift+0, -0.2)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. Teff", th17shift-0.5, -0.1)
+
+tfhshift <- -2.5
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "SAA+ Epi.", -0.75, 0.15)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PDPNHi Fibro.", -1.5, 0.4)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "IgG1 PC", tfhshift-0.2, 1.1)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "GC-like BC", tfhshift+0.5, 0.75)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Plasmablast", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "Prlf. BC", tfhshift-0.25, 0.5)
+selectedCorrGGraph$data <- moveNode(selectedCorrGGraph$data, "PD1Hi Tfh", tfhshift+0, 0.5)
+
+selectedCorrGGraph +
+  geom_edge_fan(aes(width = correlation + 0.25), color = "black") +
+  geom_edge_fan(aes(color = correlation, width = correlation)) +
+  geom_node_label(aes(label = name, 
+                      color = ifelse(name %in% corr.list$`PD1Hi Tfh`, as.character(celltype), NA)), 
+                  fontface = "bold", size = 8, alpha = 1, label.size = 4, label.padding = unit(0, "lines")) +
+  scale_color_manual(values = c(colCelltypes), na.value = "gray90", na.translate = F) +
+  labs(color = NULL) +
+  ggnewscale::new_scale("color") +
+  geom_node_label(aes(label = name, color = ifelse(name %in% corr.list$`PD1Hi Tfh`, "show", "hide")),
+                  fontface = "bold", size = 8, label.size = 0, show.legend = F, label.padding = unit(0, "lines")) +
+  scale_color_manual(values = c("show" = "black", "hide" = "gray65")) +
+  scale_edge_color_viridis(option = "magma", guide = "edge_colourbar", limits = c(minCorrFilter,1), breaks = seq(minCorrShow, 1, 0.1)) +
+  guides(edge_width = "none") +
+  labs(
+    color = NULL,
+    edge_color = "Correlation"
+  ) +
+  facet_grid(~cellstate) +
+  theme_graph(foreground = 'black', fg_text_colour = 'white', plot_margin = unit(c(0.25,0.25,0.25,0.25), "cm"), border = F) + 
+  coord_cartesian(clip = "on") +
+  theme(
+    strip.text = element_text(family = "bold", size = 36),
+    legend.title = element_text(family = "bold", size = 24),
+    legend.text = element_text(family = "bold", size = 24),
+    legend.position = "right",
+    legend.spacing.y = unit(10, "mm"),
+    legend.key.height = unit(1.4, "cm"),    
+    panel.spacing.x = unit(0.5,"cm"),
+    plot.margin = unit(c(0.25,0.25,0.25,0.25), "cm"),
+    panel.border = element_rect(fill=NA, size=2)
+  )  +
+  expand_limits(x = -0.45) +
+  guides(edge_color = guide_edge_colorbar(barheight = 10))
+```
+
+## Geometric Means
+
+```{r, fig.width=6, fig.height=4}
+ggplot(CellFreqDF.wide.scored %>% mutate(dummy = "dummy"), aes(x = diagSub, y = geommean.th1, fill = diagSub)) + 
+  geom_point(size = 4, shape = 21, alpha = 0.75, 
+             position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  stat_summary(fun.data = "mean_cl_boot", geom = "errorbar", width = 0.6, color = "black") +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6, 
+               aes(color = diagSub)) +
+  scale_fill_manual(values = diagSubColVec) + 
+  scale_color_manual(values = diagSubColVec) + 
+  stat_compare_means(comparisons = diagSub.comp, method = "wilcox.test", label = "p.format", size = 7, vjust = 1.25, tip.length = 0.075, bracket.size = 1) +
+  facet_wrap(~dummy, labeller = as_labeller(c("dummy" ="Th1-Associated Geometric Mean"))) +
+  labs(
+    y = "Geometric Mean of Th1\nAssociated Cellstate Frequency",
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 24, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 16, color = "black", face = "bold"),
+    strip.background = element_rect(color = "black", fill = "white")
+  )
+```
+
+```{r, fig.width=6, fig.height=4}
+ggplot(CellFreqDF.wide.scored %>% mutate(dummy = "dummy"), aes(x = diagSub, y = geommean.th17, fill = diagSub)) + 
+  geom_point(size = 4, shape = 21, alpha = 0.75, 
+             position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  stat_summary(fun.data = "mean_cl_boot", geom = "errorbar", width = 0.6, color = "black") +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6, 
+               aes(color = diagSub)) +
+  scale_fill_manual(values = diagSubColVec) + 
+  scale_color_manual(values = diagSubColVec) + 
+  stat_compare_means(comparisons = diagSub.comp, method = "wilcox.test", label = "p.format", size = 7, vjust = 1.25, tip.length = 0.075, bracket.size = 1) +
+  facet_wrap(~dummy, labeller = as_labeller(c("dummy" ="Th17-Associated Geometric Mean"))) +
+  labs(
+    y = "Geometric Mean of Th17\nAssociated Cellstate Frequency",
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 24, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 16, color = "black", face = "bold"),
+    strip.background = element_rect(color = "black", fill = "white")
+  )
+```
+
+
+```{r, fig.width=6, fig.height=4}
+ggplot(CellFreqDF.wide.scored %>% mutate(dummy = "dummy"), aes(x = diagSub, y = geommean.tfh, fill = diagSub)) + 
+  geom_point(size = 4, shape = 21, alpha = 0.75, 
+             position = position_jitterdodge(jitter.width = 0.75, seed = thisseed)) +
+  stat_summary(fun.data = "mean_cl_boot", geom = "errorbar", width = 0.6, color = "black") +
+  stat_summary(fun = "mean", geom = "crossbar", width = 0.6, linewidth = 0.6, 
+               aes(color = diagSub)) +
+  scale_fill_manual(values = diagSubColVec) + 
+  scale_color_manual(values = diagSubColVec) + 
+  stat_compare_means(comparisons = diagSub.comp, method = "wilcox.test", label = "p.format", size = 7, vjust = 1.25, tip.length = 0.075, bracket.size = 1) +
+  facet_wrap(~dummy, labeller = as_labeller(c("dummy" ="PD1Hi Tfh-Associated Geometric Mean"))) +
+  labs(
+    y = "Geometric Mean of PD1Hi Tfh\nAssociated Cellstate Frequency",
+  ) +
+  theme_light() +
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),
+    plot.subtitle = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 24, face = "bold"),
+    axis.text.y = element_text(size = 16, face = "bold"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    legend.position = "none",
+    legend.text = element_text(size = 14, face = "bold"),
+    strip.text = element_text(size = 16, color = "black", face = "bold"),
+    strip.background = element_rect(color = "black", fill = "white")
+  )
+```
+
+# NicheNet
+
+```{r}
+multinichenet_output <- readRDS("data/nichenet/analysis/multinichenetoutput__ccduc_t0_thtfh_praw.rds")
+multinichenet_output %>% names
+```
+
+## Circos
+
+```{r}
+top_lr_overall.sender.thtfh <- get_top_n_lr_pairs(
+  multinichenet_output$prioritization_tables, 
+  top_n = 120, 
+  senders_oi = c("Thelper", "Tfh"),
+  rank_per_group = FALSE
+  )
+top_lr_overall.sender.thtfh %>% select(group, sender) %>% table
+```
+
+
+```{r}
+top_lr_overall_prioritized.sender.thtfh <- multinichenet_output$prioritization_tables$group_prioritization_tbl %>%
+  filter(id %in% top_lr_overall.sender.thtfh$id) %>%
+  distinct(id, sender, receiver, ligand, receptor, group) %>% 
+  left_join(top_lr_overall.sender.thtfh)
+top_lr_overall_prioritized.sender.thtfh$prioritization_score[is.na(top_lr_overall_prioritized.sender.thtfh$prioritization_score)] = 0
+
+top_lr_overall_prioritized.sender.thtfh
+```
+
+
+```{r, fig.width=11, fig.height=11}
+circos.sender.overall.thtfh <- make_circos_group_comparison(top_lr_overall_prioritized.sender.thtfh, annoColVec, annoColVec)
+```
+
+## Activity
+
+### Th and Tfh Senders
+
+```{r}
+plot.activity.overall.sender.thtfh <- multinichenet_output$prioritization_tables$ligand_activities_target_de_tbl %>% 
+  ungroup %>% 
+  mutate(group = ifelse(contrast == "cCD-UC", "cCD", "UC")) %>% 
+  relocate(group) %>% 
+  filter(direction_regulation == "up") %>%
+  distinct(group, ligand, receiver, activity, activity_scaled, direction_regulation) %>% 
+  filter(ligand %in% top_lr_overall_prioritized.sender.thtfh$ligand)
+
+plot.activity.overall.sender.thtfh
+```
+
+```{r, fig.width=16, fig.height=5}
+activity.max <- abs(plot.activity.overall.sender.thtfh$activity_scaled) %>% max %>% ceiling
+ggplot(plot.activity.overall.sender.thtfh, aes(x = ligand, y = receiver, fill = activity_scaled)) + 
+  geom_tile(color = "gray80") + 
+  facet_grid(group ~ . ) +
+  scale_y_discrete(limits = rev) +
+  scale_fill_gradient2(low = "darkblue", mid = "#FFFFFF", high = "darkred", 
+                       limits = c(-activity.max, activity.max)) + 
+  labs(
+    x = "Ligand",
+    y = "Receiver",
+    fill = "Scaled\nLigand\nActivity"
+  ) +
+  theme_light() + 
+  theme(
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12, face = "bold", angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 12, face = "bold"),
+    legend.title = element_text(size = 12, face = "bold"),
+    legend.text = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 14, face = "bold", color = "black"),
+    strip.background = element_rect(color = "black", fill = "white", linewidth = 1)
+  )
+```
+
+# SessionInfo
+
+```{r}
+sessionInfo()
+```

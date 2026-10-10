@@ -1,0 +1,79 @@
+---
+title: "Compute TCR Phenotypes"
+date: "`r Sys.Date()`"
+author: "Leonard Nettey"
+output: 
+  html_notebook:
+    toc: yes
+---
+
+In this notebook, I will compute TCR phenotype data
+
+TiRP script obtained from [ImmunoGenomics GitHub page](https://github.com/immunogenomics/TiRP)
+
+# Setup
+
+```{r setup}
+library(tidyverse)
+library(alakazam)
+
+source("../../src/tirp/results/TiRP.R")
+```
+
+```{r}
+tcrs <- read_csv("data/tcr/filtered_contigs_paired_241120.csv")
+tcrs
+```
+
+# TiRP
+
+```{r}
+TiRP.input <- tcrs %>% 
+  select(v_gene.TRB, cdr3.TRB) %>% 
+  rename(v_gene = v_gene.TRB, cdr3 = cdr3.TRB) %>% 
+  mutate(v_gene = as.factor(v_gene)) %>%  # TiRP requires v_gene to be a factor
+  as.data.frame  # TiRP won't work as a tibble
+TiRP.input
+```
+
+```{r}
+path_to_results <- "src/tirp/results"
+tictoc::tic()
+TiRP.output <- TiRP(TiRP.input)
+tictoc::toc()
+TiRP.output
+```
+
+```{r}
+write_csv(TiRP.output, "out/tcr/tirp/241120_predictCOL_tirp.csv")
+```
+
+# Alakazam
+
+
+```{r}
+tcrs.input <- tcrs %>% 
+  mutate(cdr3.len = nchar(cdr3.TRB)) %>% 
+  mutate(cdr3mr = ifelse(cdr3.len >= 12 & cdr3.len <= 17, substr(cdr3.TRB, 5, nchar(cdr3.TRB) - 6), NA)) %>% 
+  filter(!is.na(cdr3mr)) %>% 
+  select(cdr3mr) %>% 
+  distinct
+
+tcrs.input
+```
+
+```{r}
+tcrs.scored <- aminoAcidProperties(tcrs.input, seq = "cdr3mr", nt = FALSE)
+tcrs.scored
+```
+
+```{r}
+write_csv(tcrs.scored, "out/tcr/alakazam/cdr3b_mr_alakazam_scored_241120.csv")
+```
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
+
